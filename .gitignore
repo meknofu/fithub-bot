@@ -1,0 +1,7 @@
+# Environment
+.env
+google_vision_credentials.json
+__pycache__/
+*.pyc
+*.db
+venv/
