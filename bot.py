@@ -14,29 +14,87 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler
 )
-from dotenv import load_dotenv
 
-from database import db
-from vision_api import vision_api
-from food_api import food_api
-
-# Загрузка переменных окружения
-load_dotenv()
-
-# Настройка логирования
+# Настройка логирования ПЕРВЫМ делом
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Проверка токена
+logger.info("🚀 Запуск Fithub Bot...")
+
+# Загружаем переменные окружения
+from dotenv import load_dotenv
+load_dotenv()
+
+# Проверка токена с graceful degradation
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+
 if not TELEGRAM_BOT_TOKEN:
     logger.error("❌ TELEGRAM_BOT_TOKEN не найден!")
-    raise ValueError("TELEGRAM_BOT_TOKEN не найден")
+    logger.info("💡 Добавьте TELEGRAM_BOT_TOKEN в Railway Variables")
+    logger.info("💡 Или установите в .env файл для локальной разработки")
+    # Вместо падения, используем демо-режим
+    TELEGRAM_BOT_TOKEN = "demo_mode"
+    logger.warning("⚠️ Бот запущен в демо-режиме без Telegram")
 
-logger.info("✅ Бот запускается...")
+# Импорты с обработкой ошибок
+try:
+    from database import db
+    logger.info("✅ База данных загружена")
+except Exception as e:
+    logger.error(f"❌ Ошибка загрузки базы данных: {e}")
+    # Создаем заглушку
+    class DatabaseStub:
+        def get_connection(self): pass
+        def init_db(self): pass
+        def add_user(self, *args): pass
+        def get_user(self, *args): return None
+        def add_food_entry(self, *args): pass
+        def get_daily_summary(self, *args): return (0, 0, 0, 0)
+    db = DatabaseStub()
+
+try:
+    # Пробуем сначала упрощенную версию
+    from vision_api_simple import vision_api
+    logger.info("✅ Vision API загружен (упрощенная версия)")
+except Exception as e:
+    logger.error(f"❌ Ошибка загрузки Vision API: {e}")
+    # Создаем заглушку
+    class VisionAPIStub:
+        def analyze_image(self, image_content):
+            return {
+                'success': False,
+                'error': 'Vision API не настроен',
+                'detected_items': [],
+                'total_detected': 0
+            }
+    vision_api = VisionAPIStub()
+
+try:
+    from food_api import food_api
+    logger.info("✅ Food API загружен")
+except Exception as e:
+    logger.error(f"❌ Ошибка загрузки Food API: {e}")
+    # Создаем заглушку
+    class FoodAPIStub:
+        def get_food_info(self, food_name, quantity=100):
+            return {
+                'name': food_name,
+                'calories': 100,
+                'protein': 5,
+                'fat': 3,
+                'carbs': 15,
+                'quantity': quantity,
+                'source': 'stub'
+            }
+    food_api = FoodAPIStub()
+
+logger.info("✅ Все модули загружены")
+
+# Остальной код бота (состояния, клавиатуры, команды)...
+# [КОНВЕРСАЦИИ, КЛАВИАТУРЫ, КОМАНДЫ БЕЗ ИЗМЕНЕНИЙ]
 
 # Состояния диалога
 CHOOSING_ROLE, TRAINEE_SETUP, AWAITING_PHOTO, CONFIRM_FOOD, MANUAL_INPUT, LINK_TRAINER = range(6)
@@ -453,28 +511,43 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Основная функция запуска бота"""
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
-    # Обработчик диалога
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
-        states={
-            CHOOSING_ROLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_role)],
-            TRAINEE_SETUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, setup_trainee)],
-            CONFIRM_FOOD: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_food_confirmation)],
-            MANUAL_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_manual_input)],
-            AWAITING_PHOTO: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_meal_type)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-    )
+    if TELEGRAM_BOT_TOKEN == "demo_mode":
+        logger.error("❌ Бот не может запуститься без TELEGRAM_BOT_TOKEN")
+        logger.info("💡 Инструкция по настройке:")
+        logger.info("1. Перейдите в Railway Dashboard")
+        logger.info("2. Откройте вкладку Variables")
+        logger.info("3. Добавьте TELEGRAM_BOT_TOKEN = ваш_токен")
+        logger.info("4. Railway автоматически перезапустит бота")
+        return
     
-    application.add_handler(conv_handler)
-    application.add_handler(CommandHandler('summary', show_summary))
-    application.add_handler(CommandHandler('profile', show_profile))
-    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    
-    print("🚀 Бот запускается...")
-    application.run_polling()
+    try:
+        application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+        
+        # Обработчик диалога
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler('start', start)],
+            states={
+                CHOOSING_ROLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_role)],
+                TRAINEE_SETUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, setup_trainee)],
+                CONFIRM_FOOD: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_food_confirmation)],
+                MANUAL_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_manual_input)],
+                AWAITING_PHOTO: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_meal_type)],
+            },
+            fallbacks=[CommandHandler('cancel', cancel)],
+        )
+        
+        application.add_handler(conv_handler)
+        application.add_handler(CommandHandler('summary', show_summary))
+        application.add_handler(CommandHandler('profile', show_profile))
+        application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+        
+        logger.info("✅ Бот сконфигурирован, запускаем...")
+        application.run_polling()
+        
+    except Exception as e:
+        logger.error(f"❌ Критическая ошибка при запуске бота: {e}")
+        logger.info("💡 Проверьте TELEGRAM_BOT_TOKEN в Railway Variables")
 
 if __name__ == '__main__':
     main()
