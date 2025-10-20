@@ -35,7 +35,8 @@ class Database:
                     fat_goal REAL,
                     carb_goal REAL,
                     trainer_id INTEGER,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (trainer_id) REFERENCES users (user_id)
                 )
             ''')
             
@@ -51,7 +52,8 @@ class Database:
                     protein REAL,
                     fat REAL,
                     carbs REAL,
-                    meal_type TEXT,
+                    meal_type TEXT CHECK(meal_type IN ('breakfast', 'lunch', 'dinner', 'snack')),
+                    confirmed BOOLEAN DEFAULT 1,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users (user_id)
                 )
@@ -86,13 +88,13 @@ class Database:
                 'SELECT * FROM users WHERE user_id = ?', (user_id,)
             ).fetchone()
     
-    def add_food_entry(self, user_id, food_name, quantity, calories, protein, fat, carbs, meal_type):
+    def add_food_entry(self, user_id, food_name, quantity, calories, protein, fat, carbs, meal_type, confirmed=True):
         with self.get_connection() as conn:
             conn.execute('''
                 INSERT INTO food_log 
-                (user_id, food_name, quantity, calories, protein, fat, carbs, meal_type)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (user_id, food_name, quantity, calories, protein, fat, carbs, meal_type))
+                (user_id, food_name, quantity, calories, protein, fat, carbs, meal_type, confirmed)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, food_name, quantity, calories, protein, fat, carbs, meal_type, confirmed))
     
     def get_daily_summary(self, user_id, date=None):
         if date is None:
@@ -106,19 +108,17 @@ class Database:
                     SUM(fat), 
                     SUM(carbs)
                 FROM food_log 
-                WHERE user_id = ? AND date = ?
+                WHERE user_id = ? AND date = ? AND confirmed = 1
             ''', (user_id, date)).fetchone()
             
             return result or (0, 0, 0, 0)
     
     def link_trainer_trainee(self, trainer_id, trainee_id):
         with self.get_connection() as conn:
-            # Обновляем trainer_id у пользователя
             conn.execute(
                 'UPDATE users SET trainer_id = ? WHERE user_id = ?',
                 (trainer_id, trainee_id)
             )
-            # Добавляем связь
             conn.execute('''
                 INSERT OR REPLACE INTO trainer_relationships 
                 (trainer_id, trainee_id) VALUES (?, ?)
@@ -132,6 +132,16 @@ class Database:
                 JOIN trainer_relationships tr ON u.user_id = tr.trainee_id
                 WHERE tr.trainer_id = ?
             ''', (trainer_id,)).fetchall()
+    
+    def get_todays_entries(self, user_id):
+        today = datetime.datetime.now().strftime('%Y-%m-%d')
+        with self.get_connection() as conn:
+            return conn.execute('''
+                SELECT id, food_name, quantity, calories, protein, fat, carbs, meal_type
+                FROM food_log 
+                WHERE user_id = ? AND date = ? AND confirmed = 1
+                ORDER BY created_at
+            ''', (user_id, today)).fetchall()
 
 # Глобальный экземпляр базы данных
 db = Database()

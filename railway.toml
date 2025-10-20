@@ -4,3 +4,7 @@ builder = "nixpacks"
 [deploy]
 startCommand = "python bot.py"
 restartPolicyType = "on_failure"
+
+[[services]]
+name = "fithub-bot"
+type = "worker"
