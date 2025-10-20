@@ -101,3 +101,41 @@ class KBJUCalculator:
             'fat': round(selected['fat'] * ratio, 1),
             'carbs': round(selected['carbs'] * ratio, 1)
         }
+     def get_average_kbju(self, food_name, weight_grams):
+    """Улучшенная база средних значений КБЖУ"""
+    # Расширенная база продуктов
+    average_values = {
+        # Рыба и морепродукты
+        'рыба': {'calories': 120, 'protein': 20, 'fat': 5, 'carbs': 0},
+        'лосось': {'calories': 208, 'protein': 20, 'fat': 13, 'carbs': 0},
+        'тунец': {'calories': 132, 'protein': 28, 'fat': 1, 'carbs': 0},
+        'креветки': {'calories': 85, 'protein': 18, 'fat': 1, 'carbs': 0},
+        'курица': {'calories': 165, 'protein': 31, 'fat': 3.6, 'carbs': 0},
+        'говядина': {'calories': 250, 'protein': 26, 'fat': 15, 'carbs': 0},
+        # Гарниры
+        'рис': {'calories': 130, 'protein': 2.7, 'fat': 0.3, 'carbs': 28},
+        'гречка': {'calories': 110, 'protein': 4.2, 'fat': 1.1, 'carbs': 21},
+        'картофель': {'calories': 77, 'protein': 2, 'fat': 0.1, 'carbs': 17},
+        'макароны': {'calories': 131, 'protein': 5, 'fat': 1.1, 'carbs': 25},
+        # Овощи
+        'салат': {'calories': 15, 'protein': 1.4, 'fat': 0.2, 'carbs': 2.9},
+        'овощи': {'calories': 40, 'protein': 2, 'fat': 0.3, 'carbs': 8},
+        # По умолчанию
+        'default': {'calories': 200, 'protein': 10, 'fat': 8, 'carbs': 20}
+    }
+    
+    food_lower = food_name.lower()
+    for key in average_values:
+        if key in food_lower:
+            selected = average_values[key]
+            break
+    else:
+        selected = average_values['default']
+    
+    ratio = weight_grams / 100
+    return {
+        'calories': round(selected['calories'] * ratio),
+        'protein': round(selected['protein'] * ratio, 1),
+        'fat': round(selected['fat'] * ratio, 1),
+        'carbs': round(selected['carbs'] * ratio, 1)
+    }

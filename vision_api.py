@@ -3,6 +3,7 @@ import io
 import logging
 import json
 import os
+import random
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -10,7 +11,6 @@ logger = logging.getLogger(__name__)
 class VisionAPI:
     def __init__(self):
         try:
-            # Способ 1: Используем API ключ из переменной окружения
             if Config.GOOGLE_VISION_API_KEY:
                 from google.cloud.vision_v1 import ImageAnnotatorClient
                 from google.api_core.client_options import ClientOptions
@@ -18,9 +18,7 @@ class VisionAPI:
                 client_options = ClientOptions(api_key=Config.GOOGLE_VISION_API_KEY)
                 self.client = ImageAnnotatorClient(client_options=client_options)
                 logger.info("Google Vision API initialized with API Key")
-                
             else:
-                # Способ 2: Используем Service Account credentials
                 self.client = vision.ImageAnnotatorClient()
                 logger.info("Google Vision API initialized with default credentials")
                 
@@ -29,51 +27,62 @@ class VisionAPI:
             self.client = None
 
     def detect_food_items(self, image_content):
-        """Определяет продукты на фотографии через Google Vision API"""
+        """Улучшенное определение еды с фильтрацией общих категорий"""
         if not self.client:
             return self._get_fallback_response()
             
         try:
             image = vision.Image(content=image_content)
             
-            # Детекция объектов
+            # Получаем разные типы анализа
             objects_response = self.client.object_localization(image=image)
             objects = objects_response.localized_object_annotations
             
-            # Детекция текста
-            text_response = self.client.text_detection(image=image)
-            texts = text_response.text_annotations
-            
-            # Детекция лейблов (категорий)
             label_response = self.client.label_detection(image=image)
             labels = label_response.label_annotations
             
+            text_response = self.client.text_detection(image=image)
+            texts = text_response.text_annotations
+            
             food_items = []
             
-            # Анализ объектов
+            # Сначала объекты (более точные)
             for obj in objects:
-                if self._is_food_item(obj.name):
+                if self._is_specific_food_item(obj.name):
                     food_items.append({
                         'name': obj.name,
                         'confidence': obj.score,
-                        'type': 'object'
+                        'type': 'object',
+                        'score': obj.score
                     })
             
-            # Анализ лейблов (категорий)
+            # Затем лейблы (фильтруем общие категории)
             for label in labels:
-                if self._is_food_item(label.description) and label.score > 0.7:
-                    # Проверяем, нет ли уже такого продукта
-                    if not any(item['name'] == label.description for item in food_items):
+                if (self._is_specific_food_item(label.description) and 
+                    label.score > 0.8 and  # Выше порог уверенности
+                    not self._is_general_category(label.description)):
+                    
+                    # Проверяем дубликаты
+                    if not any(item['name'].lower() == label.description.lower() for item in food_items):
                         food_items.append({
                             'name': label.description,
                             'confidence': label.score,
-                            'type': 'label'
+                            'type': 'label',
+                            'score': label.score
                         })
+            
+            # Сортируем по уверенности и берем топ-3
+            food_items.sort(key=lambda x: x['score'], reverse=True)
+            food_items = food_items[:3]
+            
+            # Если ничего не нашли, используем fallback
+            if not food_items:
+                return self._get_fallback_response()
             
             detected_text = texts[0].description if texts else ""
             
             return {
-                'food_items': food_items[:3],  # Ограничиваем 3 продуктами
+                'food_items': food_items,
                 'detected_text': detected_text,
                 'estimated_weights': self.estimate_weights(food_items)
             }
@@ -82,45 +91,78 @@ class VisionAPI:
             logger.error(f"Vision API error: {e}")
             return self._get_fallback_response()
 
-    def _is_food_item(self, item_name):
-        """Проверяет, является ли объект едой"""
-        food_keywords = [
-            'food', 'fruit', 'vegetable', 'meal', 'dish', 'cuisine',
-            'apple', 'banana', 'orange', 'bread', 'pasta', 'rice',
-            'pizza', 'hamburger', 'sandwich', 'salad', 'soup',
-            'chicken', 'meat', 'beef', 'pork', 'fish', 'seafood',
-            'egg', 'cheese', 'milk', 'yogurt', 'cake', 'cookie',
-            'dessert', 'beverage', 'drink', 'coffee', 'tea'
+    def _is_specific_food_item(self, item_name):
+        """Проверяет, является ли объект конкретной едой (не общей категорией)"""
+        specific_foods = [
+            # Фрукты
+            'apple', 'banana', 'orange', 'grape', 'strawberry', 'watermelon',
+            'pineapple', 'mango', 'pear', 'peach', 'cherry', 'kiwi',
+            # Овощи
+            'tomato', 'cucumber', 'carrot', 'potato', 'onion', 'pepper',
+            'broccoli', 'cabbage', 'lettuce', 'spinach', 'corn',
+            # Мясо и рыба
+            'chicken', 'beef', 'pork', 'steak', 'salmon', 'tuna', 'shrimp',
+            'fish', 'crab', 'lobster', 'sausage', 'bacon',
+            # Готовые блюда
+            'pizza', 'burger', 'sandwich', 'pasta', 'rice', 'sushi',
+            'soup', 'salad', 'omelette', 'steak', 'curry',
+            # Молочные продукты
+            'cheese', 'milk', 'yogurt', 'butter', 'egg', 'eggs',
+            # Прочее
+            'bread', 'cake', 'cookie', 'chocolate', 'ice cream', 'coffee'
         ]
         
         item_lower = item_name.lower()
-        return any(keyword in item_lower for keyword in food_keywords)
+        return any(food in item_lower for food in specific_foods)
+
+    def _is_general_category(self, item_name):
+        """Фильтрует общие категории еды"""
+        general_categories = [
+            'food', 'cuisine', 'meal', 'dish', 'ingredient', 'produce',
+            'seafood', 'meat', 'fruit', 'vegetable', 'dairy', 'bread',
+            'dessert', 'beverage', 'drink', 'snack', 'breakfast',
+            'lunch', 'dinner', 'supper'
+        ]
+        
+        item_lower = item_name.lower()
+        return any(category == item_lower for category in general_categories)
 
     def _get_fallback_response(self):
-        """Резервный ответ при ошибке Vision API"""
+        """Улучшенный fallback - просим ввести название вручную"""
         return {
-            'food_items': [{
-                'name': 'food',
-                'confidence': 0.8,
-                'type': 'fallback'
-            }],
-            'detected_text': 'Используется базовый анализ',
-            'estimated_weights': {'food': 200}
+            'food_items': [],
+            'detected_text': 'Не удалось определить конкретные продукты',
+            'estimated_weights': {}
         }
 
     def estimate_weights(self, food_items):
-        """Оценивает вес продуктов на основе их типа"""
+        """Улучшенная оценка веса"""
         estimated_weights = {}
         
-        weight_estimates = {
-            'apple': 150, 'banana': 120, 'orange': 130, 'fruit': 150,
-            'bread': 30, 'pasta': 100, 'rice': 150, 'grain': 150,
-            'pizza': 300, 'hamburger': 200, 'sandwich': 150,
-            'salad': 200, 'soup': 300, 'chicken': 150,
-            'meat': 200, 'beef': 200, 'pork': 200, 'fish': 150,
-            'egg': 50, 'cheese': 30, 'vegetable': 100,
-            'cake': 100, 'cookie': 25, 'dessert': 100,
-            'food': 200  # значение по умолчанию
+        detailed_weight_estimates = {
+            # Фрукты (в граммах)
+            'apple': 180, 'banana': 120, 'orange': 130, 'grape': 150,
+            'strawberry': 150, 'watermelon': 1000, 'pineapple': 900,
+            'mango': 200, 'pear': 170, 'peach': 150, 'cherry': 100,
+            'kiwi': 70,
+            # Овощи
+            'tomato': 120, 'cucumber': 150, 'carrot': 60, 'potato': 150,
+            'onion': 100, 'pepper': 120, 'broccoli': 150, 'cabbage': 200,
+            'lettuce': 100, 'spinach': 30, 'corn': 150,
+            # Мясо и рыба
+            'chicken': 150, 'beef': 200, 'pork': 150, 'steak': 250,
+            'salmon': 150, 'tuna': 150, 'shrimp': 100, 'fish': 150,
+            'crab': 200, 'lobster': 300, 'sausage': 100, 'bacon': 70,
+            # Готовые блюда
+            'pizza': 300, 'burger': 250, 'sandwich': 200, 'pasta': 250,
+            'rice': 200, 'sushi': 100, 'soup': 350, 'salad': 200,
+            'omelette': 150, 'curry': 300,
+            # Молочные продукты
+            'cheese': 30, 'milk': 200, 'yogurt': 150, 'butter': 15,
+            'egg': 50, 'eggs': 50,
+            # Прочее
+            'bread': 40, 'cake': 120, 'cookie': 25, 'chocolate': 50,
+            'ice cream': 100, 'coffee': 200
         }
         
         for item in food_items:
@@ -128,14 +170,21 @@ class VisionAPI:
             found_weight = False
             
             # Ищем точное совпадение
-            for food, weight in weight_estimates.items():
+            for food, weight in detailed_weight_estimates.items():
                 if food in item_name:
                     estimated_weights[item_name] = weight
                     found_weight = True
                     break
             
-            # Если не нашли, используем значение по умолчанию
+            # Если не нашли, используем взвешенное значение по умолчанию
             if not found_weight:
-                estimated_weights[item_name] = 200
+                if 'soup' in item_name:
+                    estimated_weights[item_name] = 300
+                elif 'salad' in item_name:
+                    estimated_weights[item_name] = 200
+                elif 'drink' in item_name or 'beverage' in item_name:
+                    estimated_weights[item_name] = 200
+                else:
+                    estimated_weights[item_name] = 150  # Средний вес
                 
         return estimated_weights
