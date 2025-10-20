@@ -392,6 +392,12 @@ class FithubBot:
     /stats - Статистика питания
     /profile - Мой профиль
     /report - Отчет за сегодня
+    /reset - Сбросить статистику за сегодня
+    /id - Мой ID для тренера
+
+    *Для тренеров:*
+    /add_trainee - Добавить ученика
+    /trainees - Мои ученики
 
     *Как использовать:*
     1. Отправьте фото еды 📸
@@ -399,12 +405,11 @@ class FithubBot:
     3. Подтвердите или исправьте вручную
     4. Выберите тип приема пищи
 
-    *Что умеет бот:*
-    • Распознавать еду на фото
-    • Рассчитывать калории, белки, жиры, углеводы
-    • Давать рекомендации по нормам
-    • Вести дневник питания
-    • Отправлять отчеты тренеру
+    *Для учеников:*
+    Отправьте команду /id чтобы получить ваш ID для тренера
+
+    *Для тренеров:*
+    Используйте /add_trainee [ID] чтобы добавить ученика
 
     *Примеры названий блюд для ручного ввода:*
     • Курица гриль
@@ -523,6 +528,146 @@ class FithubBot:
 
         await update.message.reply_text(report_text, parse_mode='Markdown')
 
+    async def reset_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка команды /reset - сброс статистики за сегодня"""
+        user_id = update.effective_user.id
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        try:
+            # Удаляем все записи о питании за сегодня
+            with self.db.conn.cursor() as cur:
+                cur.execute(
+                    'DELETE FROM meals WHERE user_id = %s AND DATE(created_at) = %s',
+                    (user_id, today)
+                )
+                self.db.conn.commit()
+
+            # Сбрасываем состояние пользователя
+            self.user_manager.set_user_state(user_id, 'ready')
+
+            await update.message.reply_text(
+                "✅ Статистика за сегодня сброшена!\n\n"
+                "Все записи о приемах пищи удалены. "
+                "Можете начать вести дневник питания заново.",
+                reply_markup=remove_keyboard()
+            )
+
+        except Exception as e:
+            logger.error(f"Reset error: {e}")
+            await update.message.reply_text(
+                "❌ Произошла ошибка при сбросе статистики. Попробуйте позже."
+            )
+
+    async def id_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка команды /id - показать ID пользователя"""
+        user_id = update.effective_user.id
+
+        await update.message.reply_text(
+            f"🆔 *Ваш ID:* `{user_id}`\n\n"
+            "Передайте этот ID вашему тренеру, чтобы он мог видеть вашу статистику питания.\n\n"
+            "*Тренер должен добавить вас командой:*\n"
+            "`/add_trainee ваш_id`",
+            parse_mode='Markdown'
+        )
+
+    async def add_trainee_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка команды /add_trainee - добавление ученика тренером"""
+        user_id = update.effective_user.id
+
+        # Проверяем, что пользователь - тренер
+        user_data = self.db.get_user(user_id)
+        if not user_data or user_data.get('user_type') != 'trainer':
+            await update.message.reply_text(
+                "❌ Эта команда доступна только тренерам.\n\n"
+                "Если вы тренер, сначала зарегистрируйтесь как тренер через /start"
+            )
+            return
+
+        if not context.args:
+            await update.message.reply_text(
+                "❌ Укажите ID ученика.\n\n"
+                "Пример использования:\n"
+                "`/add_trainee 123456789`\n\n"
+                "Попросите ученика отправить команду /id чтобы получить его ID",
+                parse_mode='Markdown'
+            )
+            return
+
+        try:
+            trainee_id = int(context.args[0])
+
+            # Проверяем, что ученик существует
+            trainee_data = self.db.get_user(trainee_id)
+            if not trainee_data:
+                await update.message.reply_text(
+                    "❌ Ученик с таким ID не найден.\n\n"
+                    "Попросите ученика сначала запустить бота командой /start"
+                )
+                return
+
+            # Добавляем связь тренер-ученик
+            self.db.add_trainer_trainee(user_id, trainee_id)
+
+            await update.message.reply_text(
+                f"✅ Ученик успешно добавлен!\n\n"
+                f"*ID ученика:* {trainee_id}\n"
+                f"*Имя:* {trainee_data.get('first_name', 'Неизвестно')}\n\n"
+                "Теперь вы будете получать отчеты о его питании."
+            )
+
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Неверный формат ID.\n\n"
+                "ID должен быть числом. Пример:\n"
+                "`/add_trainee 123456789`",
+                parse_mode='Markdown'
+            )
+
+    async def trainees_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка команды /trainees - список учеников тренера"""
+        user_id = update.effective_user.id
+
+        # Проверяем, что пользователь - тренер
+        user_data = self.db.get_user(user_id)
+        if not user_data or user_data.get('user_type') != 'trainer':
+            await update.message.reply_text(
+                "❌ Эта команда доступна только тренерам."
+            )
+            return
+
+        try:
+            trainees = self.db.get_trainees(user_id)
+
+            if not trainees:
+                await update.message.reply_text(
+                    "📝 У вас пока нет учеников.\n\n"
+                    "Чтобы добавить ученика:\n"
+                    "1. Попросите ученика отправить команду /id\n"
+                    "2. Используйте команду /add_trainee [ID]"
+                )
+                return
+
+            trainees_text = "👥 *Ваши ученики:*\n\n"
+
+            for trainee in trainees:
+                today = datetime.now().strftime('%Y-%m-%d')
+                trainee_meals = self.db.get_daily_intake(trainee['id'], today)
+                total_calories = sum(meal['calories'] for meal in trainee_meals)
+
+                trainees_text += (
+                    f"*{trainee.get('first_name', 'Ученик')}* (ID: `{trainee['id']}`)\n"
+                    f"• Калорий сегодня: {total_calories} ккал\n"
+                    f"• Приемов пищи: {len(trainee_meals)}\n\n"
+                )
+
+            await update.message.reply_text(trainees_text, parse_mode='Markdown')
+
+        except Exception as e:
+            logger.error(f"Trainees command error: {e}")
+            await update.message.reply_text(
+                "❌ Произошла ошибка при получении списка учеников."
+            )
+
     async def daily_summary(self, context: ContextTypes.DEFAULT_TYPE):
         """Ежедневный отчет по питанию"""
         pass
@@ -537,6 +682,10 @@ class FithubBot:
         application.add_handler(CommandHandler("stats", self.stats_command))
         application.add_handler(CommandHandler("profile", self.profile_command))
         application.add_handler(CommandHandler("report", self.report_command))
+        application.add_handler(CommandHandler("reset", self.reset_command))
+        application.add_handler(CommandHandler("id", self.id_command))
+        application.add_handler(CommandHandler("add_trainee", self.add_trainee_command))
+        application.add_handler(CommandHandler("trainees", self.trainees_command))
 
         # Обработчики сообщений
         application.add_handler(MessageHandler(filters.PHOTO, self.handle_photo))

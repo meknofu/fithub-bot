@@ -27,7 +27,7 @@ class VisionAPI:
             self.client = None
 
     def detect_food_items(self, image_content):
-        """Улучшенное определение еды с фильтрацией общих категорий"""
+        """Улучшенное определение еды с фильтрацией дубликатов"""
         if not self.client:
             return self._get_fallback_response()
             
@@ -49,31 +49,37 @@ class VisionAPI:
             # Сначала объекты (более точные)
             for obj in objects:
                 if self._is_specific_food_item(obj.name):
-                    food_items.append({
-                        'name': obj.name,
-                        'confidence': obj.score,
-                        'type': 'object',
-                        'score': obj.score
-                    })
+                    normalized_name = self._normalize_food_name(obj.name)
+                    if not self._is_duplicate(normalized_name, food_items):
+                        food_items.append({
+                            'name': normalized_name,
+                            'confidence': obj.score,
+                            'type': 'object',
+                            'score': obj.score
+                        })
             
-            # Затем лейблы (фильтруем общие категории)
+            # Затем лейблы (фильтруем общие категории и дубликаты)
             for label in labels:
                 if (self._is_specific_food_item(label.description) and 
-                    label.score > 0.8 and  # Выше порог уверенности
+                    label.score > 0.8 and
                     not self._is_general_category(label.description)):
                     
-                    # Проверяем дубликаты
-                    if not any(item['name'].lower() == label.description.lower() for item in food_items):
+                    normalized_name = self._normalize_food_name(label.description)
+                    if not self._is_duplicate(normalized_name, food_items):
                         food_items.append({
-                            'name': label.description,
+                            'name': normalized_name,
                             'confidence': label.score,
                             'type': 'label',
                             'score': label.score
                         })
             
-            # Сортируем по уверенности и берем топ-3
+            # Сортируем по уверенности и берем только самый уверенный результат
             food_items.sort(key=lambda x: x['score'], reverse=True)
-            food_items = food_items[:3]
+            
+            # Вместо нескольких вариантов берем только самый вероятный
+            if food_items:
+                best_item = food_items[0]
+                food_items = [best_item]  # Оставляем только один самый точный результат
             
             # Если ничего не нашли, используем fallback
             if not food_items:
@@ -90,6 +96,51 @@ class VisionAPI:
         except Exception as e:
             logger.error(f"Vision API error: {e}")
             return self._get_fallback_response()
+
+    def _normalize_food_name(self, food_name):
+        """Нормализует название еды, убирая дубликаты"""
+        food_name_lower = food_name.lower()
+        
+        # Группируем похожие продукты
+        food_groups = {
+            'burger': ['бургер', 'гамбургер', 'чизбургер', 'бургеры', 'hamburger', 'cheeseburger'],
+            'pizza': ['пицца', 'pizza'],
+            'sandwich': ['сэндвич', 'сендвич', 'sandwich'],
+            'salad': ['салат', 'salad'],
+            'soup': ['суп', 'soup'],
+            'chicken': ['курица', 'цыпленок', 'chicken'],
+            'fish': ['рыба', 'fish', 'лосось', 'salmon', 'тунец', 'tuna'],
+            'rice': ['рис', 'rice'],
+            'pasta': ['паста', 'макароны', 'pasta', 'spaghetti'],
+            'bread': ['хлеб', 'bread']
+        }
+        
+        for main_name, variants in food_groups.items():
+            if any(variant in food_name_lower for variant in variants):
+                return main_name
+        
+        return food_name_lower
+
+    def _is_duplicate(self, food_name, existing_items):
+        """Проверяет, является ли продукт дубликатом"""
+        for item in existing_items:
+            if item['name'] == food_name:
+                return True
+            
+            # Проверяем синонимы
+            synonyms = {
+                'burger': ['hamburger', 'cheeseburger'],
+                'chicken': ['курица', 'цыпленок'],
+                'fish': ['рыба', 'лосось', 'тунец']
+            }
+            
+            for main_name, syn_list in synonyms.items():
+                if food_name == main_name and item['name'] in syn_list:
+                    return True
+                if item['name'] == main_name and food_name in syn_list:
+                    return True
+        
+        return False
 
     def _is_specific_food_item(self, item_name):
         """Проверяет, является ли объект конкретной едой (не общей категорией)"""
@@ -185,6 +236,6 @@ class VisionAPI:
                 elif 'drink' in item_name or 'beverage' in item_name:
                     estimated_weights[item_name] = 200
                 else:
-                    estimated_weights[item_name] = 150  # Средний вес
+                    estimated_weights[item_name] = 200  # Средний вес для блюда
                 
         return estimated_weights
