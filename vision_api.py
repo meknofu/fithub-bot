@@ -27,7 +27,7 @@ class VisionAPI:
             self.client = None
 
     def detect_food_items(self, image_content):
-        """Улучшенное определение еды с фильтрацией дубликатов"""
+        """Определяет все компоненты блюда без дубликатов"""
         if not self.client:
             return self._get_fallback_response()
             
@@ -46,19 +46,19 @@ class VisionAPI:
             
             food_items = []
             
-            # Сначала объекты (более точные)
+            # Сначала объекты (самые точные)
             for obj in objects:
-                if self._is_specific_food_item(obj.name):
+                if self._is_specific_food_item(obj.name) and obj.score > 0.7:
                     normalized_name = self._normalize_food_name(obj.name)
                     if not self._is_duplicate(normalized_name, food_items):
                         food_items.append({
                             'name': normalized_name,
                             'confidence': obj.score,
                             'type': 'object',
-                            'score': obj.score
+                            'score': obj.score + 0.3  # Повышаем вес объектов
                         })
             
-            # Затем лейблы (фильтруем общие категории и дубликаты)
+            # Затем лейблы (дополняем объекты)
             for label in labels:
                 if (self._is_specific_food_item(label.description) and 
                     label.score > 0.8 and
@@ -73,16 +73,12 @@ class VisionAPI:
                             'score': label.score
                         })
             
-            # Сортируем по уверенности и берем только самый уверенный результат
+            # Сортируем по уверенности и ограничиваем разумным количеством
             food_items.sort(key=lambda x: x['score'], reverse=True)
+            food_items = food_items[:4]  # Максимум 4 разных компонента
             
-            # Вместо нескольких вариантов берем только самый вероятный
-            if food_items:
-                best_item = food_items[0]
-                food_items = [best_item]  # Оставляем только один самый точный результат
-            
-            # Если ничего не нашли, используем fallback
-            if not food_items:
+            # Если нашли только общие категории, используем fallback
+            if all(self._is_general_category(item['name']) for item in food_items):
                 return self._get_fallback_response()
             
             detected_text = texts[0].description if texts else ""
@@ -98,40 +94,52 @@ class VisionAPI:
             return self._get_fallback_response()
 
     def _normalize_food_name(self, food_name):
-        """Нормализует название еды, убирая дубликаты"""
+        """Нормализует название еды, группируя синонимы"""
         food_name_lower = food_name.lower()
         
-        # Группируем похожие продукты
+        # Группируем только настоящие синонимы, а не разные продукты
         food_groups = {
-            'burger': ['бургер', 'гамбургер', 'чизбургер', 'бургеры', 'hamburger', 'cheeseburger'],
-            'pizza': ['пицца', 'pizza'],
-            'sandwich': ['сэндвич', 'сендвич', 'sandwich'],
-            'salad': ['салат', 'salad'],
-            'soup': ['суп', 'soup'],
-            'chicken': ['курица', 'цыпленок', 'chicken'],
-            'fish': ['рыба', 'fish', 'лосось', 'salmon', 'тунец', 'tuna'],
-            'rice': ['рис', 'rice'],
-            'pasta': ['паста', 'макароны', 'pasta', 'spaghetti'],
-            'bread': ['хлеб', 'bread']
+            # Бургеры
+            'бургер': ['гамбургер', 'чизбургер', 'hamburger', 'cheeseburger'],
+            # Картофель
+            'картофель фри': ['фри', 'френч фри', 'french fries', 'fries'],
+            'картофель': ['potato', 'картошка'],
+            # Напитки
+            'кола': ['coca-cola', 'coke', 'пепси', 'pepsi'],
+            'напиток': ['drink', 'beverage'],
+            # Соусы
+            'кетчуп': ['ketchup'],
+            'майонез': ['mayonnaise', 'mayo'],
+            # Общие группировки (осторожно!)
+            'булка': ['bun', 'bread roll'],
         }
         
+        # Сначала проверяем точные совпадения
+        for main_name, variants in food_groups.items():
+            if any(variant == food_name_lower for variant in [main_name] + variants):
+                return main_name
+        
+        # Затем проверяем частичные совпадения (только для явных синонимов)
         for main_name, variants in food_groups.items():
             if any(variant in food_name_lower for variant in variants):
+                return main_name
+            if main_name in food_name_lower:
                 return main_name
         
         return food_name_lower
 
     def _is_duplicate(self, food_name, existing_items):
-        """Проверяет, является ли продукт дубликатом"""
+        """Проверяет, является ли продукт дубликатом (только для реальных синонимов)"""
         for item in existing_items:
+            # Если названия полностью совпадают
             if item['name'] == food_name:
                 return True
             
-            # Проверяем синонимы
+            # Проверяем только явные синонимы, а не разные продукты
             synonyms = {
-                'burger': ['hamburger', 'cheeseburger'],
-                'chicken': ['курица', 'цыпленок'],
-                'fish': ['рыба', 'лосось', 'тунец']
+                'бургер': ['гамбургер', 'чизбургер'],
+                'картофель фри': ['фри', 'френч фри'],
+                'кола': ['coca-cola', 'пепси'],
             }
             
             for main_name, syn_list in synonyms.items():
@@ -139,11 +147,14 @@ class VisionAPI:
                     return True
                 if item['name'] == main_name and food_name in syn_list:
                     return True
+            
+            # Не считаем дубликатами разные продукты, даже если они похожи
+            # Например: "бургер" и "булка" - это разные компоненты
         
         return False
 
     def _is_specific_food_item(self, item_name):
-        """Проверяет, является ли объект конкретной едой (не общей категорией)"""
+        """Проверяет, является ли объект конкретной едой"""
         specific_foods = [
             # Фрукты
             'apple', 'banana', 'orange', 'grape', 'strawberry', 'watermelon',
@@ -154,32 +165,31 @@ class VisionAPI:
             # Мясо и рыба
             'chicken', 'beef', 'pork', 'steak', 'salmon', 'tuna', 'shrimp',
             'fish', 'crab', 'lobster', 'sausage', 'bacon',
-            # Готовые блюда
+            # Готовые блюда и компоненты
             'pizza', 'burger', 'sandwich', 'pasta', 'rice', 'sushi',
-            'soup', 'salad', 'omelette', 'steak', 'curry',
+            'soup', 'salad', 'omelette', 'curry', 'fries', 'french fries',
             # Молочные продукты
             'cheese', 'milk', 'yogurt', 'butter', 'egg', 'eggs',
             # Прочее
-            'bread', 'cake', 'cookie', 'chocolate', 'ice cream', 'coffee'
+            'bread', 'bun', 'cake', 'cookie', 'chocolate', 'ice cream', 
+            'coffee', 'cola', 'ketchup', 'mayonnaise', 'sauce'
         ]
         
         item_lower = item_name.lower()
         return any(food in item_lower for food in specific_foods)
 
     def _is_general_category(self, item_name):
-        """Фильтрует общие категории еды"""
+        """Фильтрует только самые общие категории"""
         general_categories = [
             'food', 'cuisine', 'meal', 'dish', 'ingredient', 'produce',
-            'seafood', 'meat', 'fruit', 'vegetable', 'dairy', 'bread',
-            'dessert', 'beverage', 'drink', 'snack', 'breakfast',
-            'lunch', 'dinner', 'supper'
+            'fast food', 'junk food', 'snack food'
         ]
         
         item_lower = item_name.lower()
         return any(category == item_lower for category in general_categories)
 
     def _get_fallback_response(self):
-        """Улучшенный fallback - просим ввести название вручную"""
+        """Fallback - просим ввести название вручную"""
         return {
             'food_items': [],
             'detected_text': 'Не удалось определить конкретные продукты',
@@ -187,33 +197,27 @@ class VisionAPI:
         }
 
     def estimate_weights(self, food_items):
-        """Улучшенная оценка веса"""
+        """Оценка веса для разных компонентов блюда"""
         estimated_weights = {}
         
         detailed_weight_estimates = {
-            # Фрукты (в граммах)
-            'apple': 180, 'banana': 120, 'orange': 130, 'grape': 150,
-            'strawberry': 150, 'watermelon': 1000, 'pineapple': 900,
-            'mango': 200, 'pear': 170, 'peach': 150, 'cherry': 100,
-            'kiwi': 70,
-            # Овощи
-            'tomato': 120, 'cucumber': 150, 'carrot': 60, 'potato': 150,
-            'onion': 100, 'pepper': 120, 'broccoli': 150, 'cabbage': 200,
-            'lettuce': 100, 'spinach': 30, 'corn': 150,
+            # Основные блюда
+            'бургер': 200, 'гамбургер': 200, 'чизбургер': 220,
+            'пицца': 300, 'сэндвич': 180, 'паста': 250,
+            # Гарниры
+            'картофель фри': 150, 'фри': 150, 'френч фри': 150,
+            'рис': 150, 'картофель': 200, 'картошка': 200,
+            'салат': 150, 'овощи': 150,
             # Мясо и рыба
-            'chicken': 150, 'beef': 200, 'pork': 150, 'steak': 250,
-            'salmon': 150, 'tuna': 150, 'shrimp': 100, 'fish': 150,
-            'crab': 200, 'lobster': 300, 'sausage': 100, 'bacon': 70,
-            # Готовые блюда
-            'pizza': 300, 'burger': 250, 'sandwich': 200, 'pasta': 250,
-            'rice': 200, 'sushi': 100, 'soup': 350, 'salad': 200,
-            'omelette': 150, 'curry': 300,
-            # Молочные продукты
-            'cheese': 30, 'milk': 200, 'yogurt': 150, 'butter': 15,
-            'egg': 50, 'eggs': 50,
-            # Прочее
-            'bread': 40, 'cake': 120, 'cookie': 25, 'chocolate': 50,
-            'ice cream': 100, 'coffee': 200
+            'курица': 150, 'говядина': 150, 'рыба': 150,
+            'свинина': 150, 'стейк': 200,
+            # Добавки и соусы
+            'сыр': 30, 'соус': 20, 'кетчуп': 20, 'майонез': 15,
+            'булка': 50, 'хлеб': 40,
+            # Напитки
+            'кола': 330, 'напиток': 250, 'кофе': 200,
+            # Десерты
+            'мороженое': 100, 'торт': 120, 'печенье': 30,
         }
         
         for item in food_items:
@@ -227,15 +231,19 @@ class VisionAPI:
                     found_weight = True
                     break
             
-            # Если не нашли, используем взвешенное значение по умолчанию
+            # Если не нашли, используем категориальный подход
             if not found_weight:
-                if 'soup' in item_name:
-                    estimated_weights[item_name] = 300
-                elif 'salad' in item_name:
+                if any(word in item_name for word in ['бургер', 'пицца', 'сэндвич']):
                     estimated_weights[item_name] = 200
-                elif 'drink' in item_name or 'beverage' in item_name:
-                    estimated_weights[item_name] = 200
+                elif any(word in item_name for word in ['фри', 'картофель', 'гарнир']):
+                    estimated_weights[item_name] = 150
+                elif any(word in item_name for word in ['салат', 'овощ']):
+                    estimated_weights[item_name] = 150
+                elif any(word in item_name for word in ['соус', 'кетчуп', 'майонез']):
+                    estimated_weights[item_name] = 20
+                elif any(word in item_name for word in ['напиток', 'кола', 'кофе']):
+                    estimated_weights[item_name] = 250
                 else:
-                    estimated_weights[item_name] = 200  # Средний вес для блюда
+                    estimated_weights[item_name] = 100  # Средний вес по умолчанию
                 
         return estimated_weights

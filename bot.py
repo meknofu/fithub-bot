@@ -177,22 +177,22 @@ class FithubBot:
 
     async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
-        
+
         photo_file = await update.message.photo[-1].get_file()
         photo_bytes = await photo_file.download_as_bytearray()
-        
+
         await update.message.reply_text("🔍 Анализирую фото...")
-        
+
         try:
             # Анализ фото через Vision API
             analysis_result = self.vision.detect_food_items(bytes(photo_bytes))
-            
+
             # Сохраняем результаты анализа
             self.user_manager.set_user_state(user_id, 'awaiting_confirmation', {
                 'analysis_result': analysis_result,
                 'photo_bytes': photo_bytes
             })
-            
+
             if not analysis_result['food_items']:
                 await update.message.reply_text(
                     "Не удалось определить конкретные продукты на фото. 😕\n"
@@ -200,14 +200,15 @@ class FithubBot:
                 )
                 self.user_manager.set_user_state(user_id, 'awaiting_food_name')
                 return
-            
+
             response = "📸 На фото я определил:\n\n"
             total_calories = 0
-            
+            total_weight = 0
+
             for item in analysis_result['food_items']:
                 weight = analysis_result['estimated_weights'].get(item['name'].lower(), 100)
                 kbju = self.calculator.calculate_food_kbju(item['name'], weight)
-                
+
                 response += (
                     f"• {item['name'].title()} (~{weight}г):\n"
                     f"  🍽️ {kbju['calories']} ккал | "
@@ -216,11 +217,12 @@ class FithubBot:
                     f"🍚 {kbju['carbs']}г\n\n"
                 )
                 total_calories += kbju['calories']
-            
-            response += f"📊 Итого: {total_calories} ккал\n\nВсе верно?"
-            
+                total_weight += weight
+
+            response += f"📊 Итого: {total_calories} ккал (общий вес ~{total_weight}г)\n\nВсе верно?"
+
             await update.message.reply_text(response, reply_markup=get_confirm_keyboard())
-            
+
         except Exception as e:
             logger.error(f"Photo analysis error: {e}")
             await update.message.reply_text(
@@ -233,16 +235,16 @@ class FithubBot:
         """Обработка подтверждения результатов анализа"""
         user_id = update.effective_user.id
         message_text = update.message.text
-        
+
         if 'да, все верно' in message_text.lower():
             user_data = self.user_manager.get_user_data(user_id)
             analysis_result = user_data.get('analysis_result', {})
-            
-            # Сохраняем все распознанные продукты
+
+            # Сохраняем КАЖДЫЙ распознанный компонент как отдельную запись
             for item in analysis_result.get('food_items', []):
                 weight = analysis_result['estimated_weights'].get(item['name'].lower(), 100)
                 kbju = self.calculator.calculate_food_kbju(item['name'], weight)
-                
+
                 self.db.add_meal(
                     user_id=user_id,
                     food_name=item['name'],
@@ -253,14 +255,24 @@ class FithubBot:
                     carbs=kbju['carbs'],
                     meal_type='detected'
                 )
-            
+
+            # Показываем итоговую информацию
+            total_items = len(analysis_result.get('food_items', []))
+            total_calories = sum(
+                analysis_result['estimated_weights'].get(item['name'].lower(), 100) / 100 *
+                self.calculator.calculate_food_kbju(item['name'], 100)['calories']
+                for item in analysis_result.get('food_items', [])
+            )
+
             await update.message.reply_text(
-                "✅ Прием пищи сохранен!\n\n"
+                f"✅ Прием пищи сохранен!\n\n"
+                f"• Сохранено компонентов: {total_items}\n"
+                f"• Общие калории: {int(total_calories)} ккал\n\n"
                 "Вы можете отправить следующее фото или посмотреть статистику.",
                 reply_markup=remove_keyboard()
             )
             self.user_manager.set_user_state(user_id, 'ready')
-            
+
         elif 'нет, исправить вручную' in message_text.lower():
             await update.message.reply_text(
                 "Введите название блюда вручную:\n\n"
