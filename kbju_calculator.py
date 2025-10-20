@@ -75,40 +75,48 @@ class KBJUCalculator:
         }
 
     def get_average_kbju(self, food_name, weight_grams):
-        """Улучшенная база средних значений КБЖУ"""
-        # Расширенная база продуктов
+        """Улучшенная база КБЖУ для фастфуда"""
         average_values = {
-            # Бургеры и фастфуд
+            # Фастфуд
             'бургер': {'calories': 295, 'protein': 17, 'fat': 12, 'carbs': 28},
-            'гамбургер': {'calories': 295, 'protein': 17, 'fat': 12, 'carbs': 28},
             'чизбургер': {'calories': 330, 'protein': 18, 'fat': 16, 'carbs': 29},
-            # Картофель фри
+            'гамбургер': {'calories': 295, 'protein': 17, 'fat': 12, 'carbs': 28},
             'картофель фри': {'calories': 312, 'protein': 3.4, 'fat': 15, 'carbs': 41},
             'фри': {'calories': 312, 'protein': 3.4, 'fat': 15, 'carbs': 41},
-            # Компоненты бургера
+            'наггетсы': {'calories': 296, 'protein': 15, 'fat': 19, 'carbs': 16},
+            # Напитки
+            'напиток': {'calories': 42, 'protein': 0, 'fat': 0, 'carbs': 10.6},
+            'кола': {'calories': 42, 'protein': 0, 'fat': 0, 'carbs': 10.6},
+            'кофе': {'calories': 2, 'protein': 0.3, 'fat': 0, 'carbs': 0},
+            # Соусы
+            'соус': {'calories': 150, 'protein': 1, 'fat': 15, 'carbs': 5},
+            'кетчуп': {'calories': 110, 'protein': 1.8, 'fat': 0.3, 'carbs': 26},
+            'майонез': {'calories': 700, 'protein': 1, 'fat': 75, 'carbs': 2.6},
+            # Компоненты (используются только если распознались отдельно)
             'булка': {'calories': 265, 'protein': 9, 'fat': 3.2, 'carbs': 49},
             'котлета': {'calories': 250, 'protein': 26, 'fat': 15, 'carbs': 0},
             'сыр': {'calories': 402, 'protein': 25, 'fat': 33, 'carbs': 1.3},
             'салат': {'calories': 15, 'protein': 1.4, 'fat': 0.2, 'carbs': 2.9},
             'помидор': {'calories': 18, 'protein': 0.9, 'fat': 0.2, 'carbs': 3.9},
-            'огурец': {'calories': 15, 'protein': 0.7, 'fat': 0.1, 'carbs': 3.6},
-            'соус': {'calories': 150, 'protein': 1, 'fat': 15, 'carbs': 5},
-            'кетчуп': {'calories': 110, 'protein': 1.8, 'fat': 0.3, 'carbs': 26},
-            'майонез': {'calories': 700, 'protein': 1, 'fat': 75, 'carbs': 2.6},
-            # Напитки
-            'кола': {'calories': 42, 'protein': 0, 'fat': 0, 'carbs': 10.6},
-            'напиток': {'calories': 40, 'protein': 0, 'fat': 0, 'carbs': 10},
             # По умолчанию
-            'default': {'calories': 200, 'protein': 10, 'fat': 8, 'carbs': 20}
+            'default': {'calories': 250, 'protein': 15, 'fat': 10, 'carbs': 25}
         }
 
         food_lower = food_name.lower()
+
+        # Сначала ищем точное совпадение
         for key in average_values:
-            if key in food_lower:
+            if key == food_lower:
                 selected = average_values[key]
                 break
         else:
-            selected = average_values['default']
+            # Затем ищем частичное совпадение
+            for key in average_values:
+                if key in food_lower:
+                    selected = average_values[key]
+                    break
+            else:
+                selected = average_values['default']
 
         ratio = weight_grams / 100
         return {

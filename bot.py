@@ -201,7 +201,7 @@ class FithubBot:
                 self.user_manager.set_user_state(user_id, 'awaiting_food_name')
                 return
 
-            response = "📸 На фото я определил:\n\n"
+            response = "📸 *На фото я определил:*\n\n"
             total_calories = 0
             total_weight = 0
 
@@ -209,8 +209,9 @@ class FithubBot:
                 weight = analysis_result['estimated_weights'].get(item['name'].lower(), 100)
                 kbju = self.calculator.calculate_food_kbju(item['name'], weight)
 
+                # Используем нормальные эмодзи
                 response += (
-                    f"• {item['name'].title()} (~{weight}г):\n"
+                    f"• *{item['name'].title()}* (~{weight}г):\n"
                     f"  🍽️ {kbju['calories']} ккал | "
                     f"🥩 {kbju['protein']}г | "
                     f"🥑 {kbju['fat']}г | "
@@ -219,9 +220,9 @@ class FithubBot:
                 total_calories += kbju['calories']
                 total_weight += weight
 
-            response += f"📊 Итого: {total_calories} ккал (общий вес ~{total_weight}г)\n\nВсе верно?"
+            response += f"📊 *Итого:* {total_calories} ккал (общий вес ~{total_weight}г)\n\n*Все верно?*"
 
-            await update.message.reply_text(response, reply_markup=get_confirm_keyboard())
+            await update.message.reply_text(response, parse_mode='Markdown', reply_markup=get_confirm_keyboard())
 
         except Exception as e:
             logger.error(f"Photo analysis error: {e}")
