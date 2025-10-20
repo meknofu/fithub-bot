@@ -75,42 +75,46 @@ class KBJUCalculator:
         }
 
     def get_average_kbju(self, food_name, weight_grams):
-        """Улучшенная база КБЖУ для фастфуда"""
+        """Расширенная база КБЖУ с акцентом на рыбу"""
         average_values = {
-            # Фастфуд
-            'бургер': {'calories': 295, 'protein': 17, 'fat': 12, 'carbs': 28},
-            'чизбургер': {'calories': 330, 'protein': 18, 'fat': 16, 'carbs': 29},
-            'гамбургер': {'calories': 295, 'protein': 17, 'fat': 12, 'carbs': 28},
-            'картофель фри': {'calories': 312, 'protein': 3.4, 'fat': 15, 'carbs': 41},
-            'фри': {'calories': 312, 'protein': 3.4, 'fat': 15, 'carbs': 41},
-            'наггетсы': {'calories': 296, 'protein': 15, 'fat': 19, 'carbs': 16},
-            # Напитки
-            'напиток': {'calories': 42, 'protein': 0, 'fat': 0, 'carbs': 10.6},
-            'кола': {'calories': 42, 'protein': 0, 'fat': 0, 'carbs': 10.6},
-            'кофе': {'calories': 2, 'protein': 0.3, 'fat': 0, 'carbs': 0},
-            # Соусы
-            'соус': {'calories': 150, 'protein': 1, 'fat': 15, 'carbs': 5},
-            'кетчуп': {'calories': 110, 'protein': 1.8, 'fat': 0.3, 'carbs': 26},
-            'майонез': {'calories': 700, 'protein': 1, 'fat': 75, 'carbs': 2.6},
-            # Компоненты (используются только если распознались отдельно)
-            'булка': {'calories': 265, 'protein': 9, 'fat': 3.2, 'carbs': 49},
-            'котлета': {'calories': 250, 'protein': 26, 'fat': 15, 'carbs': 0},
-            'сыр': {'calories': 402, 'protein': 25, 'fat': 33, 'carbs': 1.3},
+            # Рыба и морепродукты
+            'рыба': {'calories': 120, 'protein': 20, 'fat': 5, 'carbs': 0},
+            'лосось': {'calories': 208, 'protein': 20, 'fat': 13, 'carbs': 0},
+            'тунец': {'calories': 132, 'protein': 28, 'fat': 1, 'carbs': 0},
+            'форель': {'calories': 148, 'protein': 21, 'fat': 7, 'carbs': 0},
+            'сибас': {'calories': 97, 'protein': 18, 'fat': 2, 'carbs': 0},
+            'карп': {'calories': 127, 'protein': 18, 'fat': 5.6, 'carbs': 0},
+            'треска': {'calories': 82, 'protein': 18, 'fat': 0.7, 'carbs': 0},
+            'сельдь': {'calories': 158, 'protein': 18, 'fat': 9, 'carbs': 0},
+            'скумбрия': {'calories': 205, 'protein': 19, 'fat': 14, 'carbs': 0},
+            'морепродукты': {'calories': 85, 'protein': 18, 'fat': 1, 'carbs': 0},
+            'креветки': {'calories': 85, 'protein': 18, 'fat': 1, 'carbs': 0},
+            'краб': {'calories': 87, 'protein': 18, 'fat': 1, 'carbs': 0},
+            # Овощи
+            'овощи': {'calories': 40, 'protein': 2, 'fat': 0.3, 'carbs': 8},
+            'помидоры': {'calories': 18, 'protein': 0.9, 'fat': 0.2, 'carbs': 3.9},
+            'огурцы': {'calories': 15, 'protein': 0.7, 'fat': 0.1, 'carbs': 3.6},
+            'морковь': {'calories': 41, 'protein': 0.9, 'fat': 0.2, 'carbs': 9.6},
+            'картофель': {'calories': 77, 'protein': 2, 'fat': 0.1, 'carbs': 17},
             'салат': {'calories': 15, 'protein': 1.4, 'fat': 0.2, 'carbs': 2.9},
-            'помидор': {'calories': 18, 'protein': 0.9, 'fat': 0.2, 'carbs': 3.9},
+            # Мясо
+            'курица': {'calories': 165, 'protein': 31, 'fat': 3.6, 'carbs': 0},
+            'говядина': {'calories': 250, 'protein': 26, 'fat': 15, 'carbs': 0},
+            'свинина': {'calories': 242, 'protein': 27, 'fat': 14, 'carbs': 0},
+            'мясо': {'calories': 250, 'protein': 26, 'fat': 15, 'carbs': 0},
             # По умолчанию
-            'default': {'calories': 250, 'protein': 15, 'fat': 10, 'carbs': 25}
+            'default': {'calories': 200, 'protein': 15, 'fat': 10, 'carbs': 15}
         }
 
         food_lower = food_name.lower()
 
-        # Сначала ищем точное совпадение
+        # Сначала точное совпадение
         for key in average_values:
             if key == food_lower:
                 selected = average_values[key]
                 break
         else:
-            # Затем ищем частичное совпадение
+            # Затем частичное совпадение
             for key in average_values:
                 if key in food_lower:
                     selected = average_values[key]
