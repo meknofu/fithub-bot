@@ -1,9 +1,0 @@
-[build]
-builder = "nixpacks"
-
-[deploy]
-startCommand = "python bot_working.py"
-
-[[services]]
-name = "fithub-bot"
-type = "worker"
