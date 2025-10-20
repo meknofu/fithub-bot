@@ -1,22 +1,6 @@
 import os
 import logging
-import datetime
-from telegram import (
-    Update, 
-    ReplyKeyboardMarkup, 
-    ReplyKeyboardRemove,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton
-)
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    filters,
-    ContextTypes,
-    ConversationHandler,
-    CallbackQueryHandler
-)
+from telegram.ext import Application
 
 # Настройка логирования
 logging.basicConfig(
@@ -25,15 +9,32 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Загрузка переменных окружения
-from dotenv import load_dotenv
-load_dotenv()
-
-# Проверка токена
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-if not TELEGRAM_BOT_TOKEN:
-    logger.error("❌ TELEGRAM_BOT_TOKEN не найден!")
-    raise ValueError("TELEGRAM_BOT_TOKEN не найден")
+def main():
+    """Основная функция с обработкой конфликтов"""
+    TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+    
+    if not TELEGRAM_BOT_TOKEN:
+        logger.error("❌ TELEGRAM_BOT_TOKEN не найден!")
+        return
+    
+    # Создаем Application с настройками для предотвращения конфликтов
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    # [ВАШ СУЩЕСТВУЮЩИЙ КОД КОНФИГУРАЦИИ...]
+    
+    logger.info("🚀 Запускаем бота с настройками против конфликтов...")
+    
+    try:
+        # Запускаем с обработкой конфликтов
+        application.run_polling(
+            allowed_updates=['message', 'callback_query'],
+            drop_pending_updates=True  # Важно: игнорируем старые сообщения
+        )
+    except Exception as e:
+        logger.error(f"❌ Ошибка запуска бота: {e}")
+        
+if __name__ == '__main__':
+    main()
 
 # Импорт модулей
 from database import db
