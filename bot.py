@@ -42,34 +42,34 @@ class FithubBot:
         self.user_manager.set_user_state(user.id, 'awaiting_user_type')
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    message_text = update.message.text
-    state = self.user_manager.get_user_state(user_id)
-    
-    logger.info(f"User {user_id} state: {state}, message: {message_text}")
-    
-    if state == 'awaiting_user_type':
-        await self.handle_user_type(update, context)
-    elif state == 'awaiting_height':
-        await self.handle_height(update, context)
-    elif state == 'awaiting_weight':
-        await self.handle_weight(update, context)
-    elif state == 'awaiting_trainer_id':
-        await self.handle_trainer_id(update, context)
-    elif state == 'awaiting_confirmation':
-        await self.handle_confirmation(update, context)
-    elif state == 'awaiting_food_name':
-        await self.handle_food_name(update, context)
-    elif state == 'awaiting_manual_weight':
-        await self.handle_manual_weight(update, context)
-    elif state == 'awaiting_meal_type':
-        await self.handle_meal_type(update, context)
-    else:
-        # Если состояние не определено, предлагаем отправить фото
-        await update.message.reply_text(
-            "Отправьте фото еды для анализа или используйте команды.",
-            reply_markup=remove_keyboard()
-        )
+        user_id = update.effective_user.id
+        message_text = update.message.text
+        state = self.user_manager.get_user_state(user_id)
+        
+        logger.info(f"User {user_id} state: {state}, message: {message_text}")
+        
+        if state == 'awaiting_user_type':
+            await self.handle_user_type(update, context)
+        elif state == 'awaiting_height':
+            await self.handle_height(update, context)
+        elif state == 'awaiting_weight':
+            await self.handle_weight(update, context)
+        elif state == 'awaiting_trainer_id':
+            await self.handle_trainer_id(update, context)
+        elif state == 'awaiting_confirmation':
+            await self.handle_confirmation(update, context)
+        elif state == 'awaiting_food_name':
+            await self.handle_food_name(update, context)
+        elif state == 'awaiting_manual_weight':
+            await self.handle_manual_weight(update, context)
+        elif state == 'awaiting_meal_type':
+            await self.handle_meal_type(update, context)
+        else:
+            # Если состояние не определено, предлагаем отправить фото
+            await update.message.reply_text(
+                "Отправьте фото еды для анализа или используйте команды.",
+                reply_markup=remove_keyboard()
+            )
 
     async def handle_user_type(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -183,44 +183,118 @@ class FithubBot:
         
         await update.message.reply_text("🔍 Анализирую фото...")
         
-        # Анализ фото через Vision API
-        analysis_result = self.vision.detect_food_items(bytes(photo_bytes))
-        
-        if not analysis_result['food_items']:
+        try:
+            # Анализ фото через Vision API
+            analysis_result = self.vision.detect_food_items(bytes(photo_bytes))
+            
+            # Сохраняем результаты анализа
+            self.user_manager.set_user_state(user_id, 'awaiting_confirmation', {
+                'analysis_result': analysis_result,
+                'photo_bytes': photo_bytes
+            })
+            
+            if not analysis_result['food_items']:
+                await update.message.reply_text(
+                    "Не удалось определить конкретные продукты на фото. 😕\n"
+                    "Пожалуйста, введите название блюда вручную:"
+                )
+                self.user_manager.set_user_state(user_id, 'awaiting_food_name')
+                return
+            
+            response = "📸 На фото я определил:\n\n"
+            total_calories = 0
+            
+            for item in analysis_result['food_items']:
+                weight = analysis_result['estimated_weights'].get(item['name'].lower(), 100)
+                kbju = self.calculator.calculate_food_kbju(item['name'], weight)
+                
+                response += (
+                    f"• {item['name'].title()} (~{weight}г):\n"
+                    f"  🍽️ {kbju['calories']} ккал | "
+                    f"🥩 {kbju['protein']}г | "
+                    f"🥑 {kbju['fat']}г | "
+                    f"🍚 {kbju['carbs']}г\n\n"
+                )
+                total_calories += kbju['calories']
+            
+            response += f"📊 Итого: {total_calories} ккал\n\nВсе верно?"
+            
+            await update.message.reply_text(response, reply_markup=get_confirm_keyboard())
+            
+        except Exception as e:
+            logger.error(f"Photo analysis error: {e}")
             await update.message.reply_text(
-                "Не удалось определить продукты на фото. 😕\n"
+                "Произошла ошибка при анализе фото. 😕\n"
                 "Пожалуйста, введите название блюда вручную:"
             )
             self.user_manager.set_user_state(user_id, 'awaiting_food_name')
+
+    async def handle_confirmation(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка подтверждения результатов анализа"""
+        user_id = update.effective_user.id
+        message_text = update.message.text
+        
+        if 'да, все верно' in message_text.lower():
+            user_data = self.user_manager.get_user_data(user_id)
+            analysis_result = user_data.get('analysis_result', {})
+            
+            # Сохраняем все распознанные продукты
+            for item in analysis_result.get('food_items', []):
+                weight = analysis_result['estimated_weights'].get(item['name'].lower(), 100)
+                kbju = self.calculator.calculate_food_kbju(item['name'], weight)
+                
+                self.db.add_meal(
+                    user_id=user_id,
+                    food_name=item['name'],
+                    weight_grams=weight,
+                    calories=kbju['calories'],
+                    protein=kbju['protein'],
+                    fat=kbju['fat'],
+                    carbs=kbju['carbs'],
+                    meal_type='detected'
+                )
+            
+            await update.message.reply_text(
+                "✅ Прием пищи сохранен!\n\n"
+                "Вы можете отправить следующее фото или посмотреть статистику.",
+                reply_markup=remove_keyboard()
+            )
+            self.user_manager.set_user_state(user_id, 'ready')
+            
+        elif 'нет, исправить вручную' in message_text.lower():
+            await update.message.reply_text(
+                "Введите название блюда вручную:\n\n"
+                "Примеры: курица гриль, гречневая каша, салат цезарь, рыба с овощами",
+                reply_markup=remove_keyboard()
+            )
+            self.user_manager.set_user_state(user_id, 'awaiting_food_name')
+        else:
+            await update.message.reply_text(
+                "Пожалуйста, выберите вариант из клавиатуры:",
+                reply_markup=get_confirm_keyboard()
+            )
+
+    async def handle_food_name(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка ручного ввода названия блюда"""
+        user_id = update.effective_user.id
+        food_name = update.message.text
+        
+        if not food_name or len(food_name.strip()) == 0:
+            await update.message.reply_text("Пожалуйста, введите название блюда:")
             return
         
-        # Сохраняем результаты анализа
-        self.user_manager.set_user_state(user_id, 'awaiting_confirmation', {
-            'analysis_result': analysis_result,
-            'photo_bytes': photo_bytes
+        # Сохраняем название блюда и просим ввести вес
+        self.user_manager.set_user_state(user_id, 'awaiting_manual_weight', {
+            'food_name': food_name.strip()
         })
         
-        response = "📸 На фото я определил:\n\n"
-        total_calories = 0
-        
-        for item in analysis_result['food_items']:
-            weight = analysis_result['estimated_weights'].get(item['name'].lower(), 100)
-            kbju = self.calculator.calculate_food_kbju(item['name'], weight)
-            
-            response += (
-                f"• {item['name'].title()} (~{weight}г):\n"
-                f"  🍽️ {kbju['calories']} ккал | "
-                f"🥩 {kbju['protein']}г | "
-                f"🥑 {kbju['fat']}г | "
-                f"🍚 {kbju['carbs']}г\n"
-            )
-            total_calories += kbju['calories']
-        
-        response += f"\n📊 Итого: {total_calories} ккал\n\nВсе верно?"
-        
-        await update.message.reply_text(response, reply_markup=get_confirm_keyboard())
+        await update.message.reply_text(
+            f"Введите вес '{food_name}' в граммах:",
+            reply_markup=remove_keyboard()
+        )
 
     async def handle_manual_weight(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка ручного ввода веса"""
         user_id = update.effective_user.id
         user_data = self.user_manager.get_user_data(user_id)
         
@@ -228,14 +302,19 @@ class FithubBot:
             weight = float(update.message.text)
             food_name = user_data['food_name']
             
+            if weight <= 0 or weight > 5000:
+                await update.message.reply_text("Пожалуйста, введите корректный вес (1-5000 грамм):")
+                return
+            
+            # Рассчитываем КБЖУ
             kbju = self.calculator.calculate_food_kbju(food_name, weight)
             
             response = (
                 f"📊 КБЖУ для {food_name} ({weight}г):\n\n"
                 f"• 🍽️ Калории: {kbju['calories']} ккал\n"
-                f"• 🥩 Белки: {kbju['protein']} г\n"
-                f"• 🥑 Жиры: {kbju['fat']} г\n"
-                f"• 🍚 Углеводы: {kbju['carbs']} г\n\n"
+                f"• 🥩 Белки: {kbju['protein']}г\n"
+                f"• 🥑 Жиры: {kbju['fat']}г\n"
+                f"• 🍚 Углеводы: {kbju['carbs']}г\n\n"
                 "Выберите тип приема пищи:"
             )
             
@@ -248,20 +327,41 @@ class FithubBot:
             await update.message.reply_text(response, reply_markup=get_meal_type_keyboard())
             
         except ValueError:
-            await update.message.reply_text("Пожалуйста, введите число:")
+            await update.message.reply_text("Пожалуйста, введите число (вес в граммах):")
 
-    async def handle_food_name(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def handle_meal_type(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка выбора типа приема пищи"""
         user_id = update.effective_user.id
-        food_name = update.message.text
+        user_data = self.user_manager.get_user_data(user_id)
+        meal_type_text = update.message.text
         
-        await update.message.reply_text(
-            f"Введите примерный вес {food_name} в граммах:",
-            reply_markup=remove_keyboard()
+        meal_type_mapping = {
+            '🍳 завтрак': 'breakfast',
+            '🍲 обед': 'lunch', 
+            '🍰 перекус': 'snack',
+            '🍽️ ужин': 'dinner'
+        }
+        
+        meal_type_en = meal_type_mapping.get(meal_type_text.lower(), 'other')
+        
+        # Сохраняем в базу
+        self.db.add_meal(
+            user_id=user_id,
+            food_name=user_data['food_name'],
+            weight_grams=user_data['weight'],
+            calories=user_data['kbju']['calories'],
+            protein=user_data['kbju']['protein'],
+            fat=user_data['kbju']['fat'],
+            carbs=user_data['kbju']['carbs'],
+            meal_type=meal_type_en
         )
         
-        self.user_manager.set_user_state(user_id, 'awaiting_manual_weight', {
-            'food_name': food_name
-        })
+        await update.message.reply_text(
+            f"✅ {meal_type_text} сохранен!\n\n"
+            "Можете отправить следующее фото или посмотреть статистику.",
+            reply_markup=remove_keyboard()
+        )
+        self.user_manager.set_user_state(user_id, 'ready')
 
     async def handle_trainer_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -284,137 +384,7 @@ class FithubBot:
 
     async def daily_summary(self, context: ContextTypes.DEFAULT_TYPE):
         """Ежедневный отчет по питанию"""
-        # Здесь можно добавить логику отправки ежедневных отчетов
-        # тренерам и ученикам
         pass
-
-    async def handle_confirmation(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка подтверждения результатов анализа"""
-    user_id = update.effective_user.id
-    message_text = update.message.text
-    
-    if 'да, все верно' in message_text.lower():
-        user_data = self.user_manager.get_user_data(user_id)
-        analysis_result = user_data.get('analysis_result', {})
-        
-        # Сохраняем все распознанные продукты
-        for item in analysis_result.get('food_items', []):
-            weight = analysis_result['estimated_weights'].get(item['name'].lower(), 100)
-            kbju = self.calculator.calculate_food_kbju(item['name'], weight)
-            
-            self.db.add_meal(
-                user_id=user_id,
-                food_name=item['name'],
-                weight_grams=weight,
-                calories=kbju['calories'],
-                protein=kbju['protein'],
-                fat=kbju['fat'],
-                carbs=kbju['carbs'],
-                meal_type='detected'
-            )
-        
-        await update.message.reply_text(
-            "✅ Прием пищи сохранен!\n\n"
-            "Вы можете отправить следующее фото или посмотреть статистику.",
-            reply_markup=remove_keyboard()
-        )
-        self.user_manager.set_user_state(user_id, 'ready')
-        
-    elif 'нет, исправить вручную' in message_text.lower():
-        await update.message.reply_text(
-            "Введите название блюда вручную:\n\n"
-            "Примеры: курица гриль, гречневая каша, салат цезарь, рыба с овощами",
-            reply_markup=remove_keyboard()
-        )
-        self.user_manager.set_user_state(user_id, 'awaiting_food_name')
-
-
-    async def handle_food_name(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ручного ввода названия блюда"""
-    user_id = update.effective_user.id
-    food_name = update.message.text
-    
-    # Сохраняем название блюда и просим ввести вес
-    self.user_manager.set_user_state(user_id, 'awaiting_manual_weight', {
-        'food_name': food_name
-    })
-    
-    await update.message.reply_text(
-        f"Введите вес '{food_name}' в граммах:",
-        reply_markup=remove_keyboard()
-    )
-
-
-    async def handle_manual_weight(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ручного ввода веса"""
-    user_id = update.effective_user.id
-    user_data = self.user_manager.get_user_data(user_id)
-    
-    try:
-        weight = float(update.message.text)
-        food_name = user_data['food_name']
-        
-        if weight <= 0 or weight > 5000:
-            await update.message.reply_text("Пожалуйста, введите корректный вес (1-5000 грамм):")
-            return
-        
-        # Рассчитываем КБЖУ
-        kbju = self.calculator.calculate_food_kbju(food_name, weight)
-        
-        response = (
-            f"📊 КБЖУ для {food_name} ({weight}г):\n\n"
-            f"• 🍽️ Калории: {kbju['calories']} ккал\n"
-            f"• 🥩 Белки: {kbju['protein']}г\n"
-            f"• 🥑 Жиры: {kbju['fat']}г\n"
-            f"• 🍚 Углеводы: {kbju['carbs']}г\n\n"
-            "Выберите тип приема пищи:"
-        )
-        
-        self.user_manager.set_user_state(user_id, 'awaiting_meal_type', {
-            'food_name': food_name,
-            'weight': weight,
-            'kbju': kbju
-        })
-        
-        await update.message.reply_text(response, reply_markup=get_meal_type_keyboard())
-        
-    except ValueError:
-        await update.message.reply_text("Пожалуйста, введите число (вес в граммах):")
-
-    async def handle_meal_type(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка выбора типа приема пищи"""
-    user_id = update.effective_user.id
-    user_data = self.user_manager.get_user_data(user_id)
-    meal_type = update.message.text
-    
-    meal_type_mapping = {
-        '🍳 завтрак': 'breakfast',
-        '🍲 обед': 'lunch', 
-        '🍰 перекус': 'snack',
-        '🍽️ ужин': 'dinner'
-    }
-    
-    meal_type_en = meal_type_mapping.get(meal_type.lower(), 'other')
-    
-    # Сохраняем в базу
-    self.db.add_meal(
-        user_id=user_id,
-        food_name=user_data['food_name'],
-        weight_grams=user_data['weight'],
-        calories=user_data['kbju']['calories'],
-        protein=user_data['kbju']['protein'],
-        fat=user_data['kbju']['fat'],
-        carbs=user_data['kbju']['carbs'],
-        meal_type=meal_type_en
-    )
-    
-    await update.message.reply_text(
-        f"✅ {meal_type} сохранен!\n\n"
-        "Можете отправить следующее фото или посмотреть статистику.",
-        reply_markup=remove_keyboard()
-    )
-    self.user_manager.set_user_state(user_id, 'ready')
-
 
     def run(self):
         """Запуск бота"""
