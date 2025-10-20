@@ -209,7 +209,7 @@ class FithubBot:
                 weight = analysis_result['estimated_weights'].get(item['name'].lower(), 100)
                 kbju = self.calculator.calculate_food_kbju(item['name'], weight)
 
-                # Используем нормальные эмодзи
+                # ПРАВИЛЬНЫЕ эмодзи
                 response += (
                     f"• *{item['name'].title()}* (~{weight}г):\n"
                     f"  🍽️ {kbju['calories']} ккал | "
