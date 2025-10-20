@@ -382,6 +382,147 @@ class FithubBot:
         except ValueError:
             await update.message.reply_text("Пожалуйста, введите корректный ID тренера:")
 
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка команды /help"""
+        help_text = """
+    🤖 *Помощь по использованию FITHUB*
+
+    *Основные команды:*
+    /start - Запустить бота
+    /stats - Статистика питания
+    /profile - Мой профиль
+    /report - Отчет за сегодня
+
+    *Как использовать:*
+    1. Отправьте фото еды 📸
+    2. Бот определит продукты и КБЖУ
+    3. Подтвердите или исправьте вручную
+    4. Выберите тип приема пищи
+
+    *Что умеет бот:*
+    • Распознавать еду на фото
+    • Рассчитывать калории, белки, жиры, углеводы
+    • Давать рекомендации по нормам
+    • Вести дневник питания
+    • Отправлять отчеты тренеру
+
+    *Примеры названий блюд для ручного ввода:*
+    • Курица гриль
+    • Гречневая каша  
+    • Салат цезарь
+    • Рыба с овощами
+    • Творог с фруктами
+    """
+        await update.message.reply_text(help_text, parse_mode='Markdown')
+
+    async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка команды /stats"""
+        user_id = update.effective_user.id
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        meals = self.db.get_daily_intake(user_id, today)
+
+        if not meals:
+            await update.message.reply_text("📊 За сегодня еще нет записей о питании.")
+            return
+
+        total_calories = sum(meal['calories'] for meal in meals)
+        total_protein = sum(meal['protein'] for meal in meals)
+        total_fat = sum(meal['fat'] for meal in meals)
+        total_carbs = sum(meal['carbs'] for meal in meals)
+
+        # Получаем дневную норму пользователя
+        user_data = self.db.get_user(user_id)
+        daily_calories = user_data.get('daily_calories', 2000) if user_data else 2000
+
+        progress = min(100, int((total_calories / daily_calories) * 100))
+
+        stats_text = f"""
+    📊 *Статистика за сегодня*
+
+    *Приемы пищи:* {len(meals)}
+    *Съедено калорий:* {total_calories} / {daily_calories} ккал
+    *Прогресс:* {progress}%
+
+    *БЖУ за день:*
+    • 🥩 Белки: {total_protein}г
+    • 🥑 Жиры: {total_fat}г  
+    • 🍚 Углеводы: {total_carbs}г
+
+    *Последние приемы пищи:*
+    """
+
+        for meal in meals[-3:]:  # Последние 3 приема
+            time = meal['created_at'].strftime('%H:%M') if meal['created_at'] else '--:--'
+            stats_text += f"• {meal['food_name']} - {meal['calories']} ккал ({time})\n"
+
+        await update.message.reply_text(stats_text, parse_mode='Markdown')
+
+    async def profile_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка команды /profile"""
+        user_id = update.effective_user.id
+        user_data = self.db.get_user(user_id)
+
+        if not user_data:
+            await update.message.reply_text("Сначала зарегистрируйтесь через /start")
+            return
+
+        profile_text = f"""
+    👤 *Ваш профиль*
+
+    *Основные данные:*
+    • Рост: {user_data.get('height', 'Не указан')} см
+    • Вес: {user_data.get('weight', 'Не указан')} кг
+    • Тип: {'🏋️ Тренер' if user_data.get('user_type') == 'trainer' else '🧑‍🎓 Ученик'}
+
+    *Рекомендуемая норма:*
+    • 🍽️ Калории: {user_data.get('daily_calories', 'Не рассчитано')} ккал/день
+    """
+
+        if user_data.get('user_type') == 'trainee' and user_data.get('trainer_id'):
+            profile_text += f"• Тренер: ID {user_data.get('trainer_id')}"
+
+        await update.message.reply_text(profile_text, parse_mode='Markdown')
+
+    async def report_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка команды /report"""
+        user_id = update.effective_user.id
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        meals = self.db.get_daily_intake(user_id, today)
+
+        if not meals:
+            await update.message.reply_text("📝 За сегодня еще нет записей о питании.")
+            return
+
+        total_calories = sum(meal['calories'] for meal in meals)
+        total_protein = sum(meal['protein'] for meal in meals)
+        total_fat = sum(meal['fat'] for meal in meals)
+        total_carbs = sum(meal['carbs'] for meal in meals)
+
+        report_text = f"""
+    📈 *Отчет по питанию за {today}*
+
+    *Общая статистика:*
+    • Приемов пищи: {len(meals)}
+    • Общие калории: {total_calories} ккал
+    • Белки: {total_protein}г
+    • Жиры: {total_fat}г
+    • Углеводы: {total_carbs}г
+
+    *Детали по приемам пищи:*
+    """
+
+        for i, meal in enumerate(meals, 1):
+            time = meal['created_at'].strftime('%H:%M') if meal['created_at'] else '--:--'
+            report_text += f"""
+    {i}. *{meal['food_name']}* ({meal['weight_grams']}г)
+       🍽️ {meal['calories']} ккал | 🥩 {meal['protein']}г | 🥑 {meal['fat']}г | 🍚 {meal['carbs']}г
+       ⏰ {time}
+    """
+
+        await update.message.reply_text(report_text, parse_mode='Markdown')
+
     async def daily_summary(self, context: ContextTypes.DEFAULT_TYPE):
         """Ежедневный отчет по питанию"""
         pass
@@ -390,8 +531,14 @@ class FithubBot:
         """Запуск бота"""
         application = Application.builder().token(Config.BOT_TOKEN).build()
 
-        # Добавляем обработчики
+        # Добавляем обработчики команд
         application.add_handler(CommandHandler("start", self.start))
+        application.add_handler(CommandHandler("help", self.help_command))
+        application.add_handler(CommandHandler("stats", self.stats_command))
+        application.add_handler(CommandHandler("profile", self.profile_command))
+        application.add_handler(CommandHandler("report", self.report_command))
+
+        # Обработчики сообщений
         application.add_handler(MessageHandler(filters.PHOTO, self.handle_photo))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
 

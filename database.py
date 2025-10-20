@@ -182,6 +182,16 @@ class Database:
             logger.error(f"Error searching food: {e}")
             return []
 
+    def get_user(self, user_id):
+        """Получает данные пользователя"""
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute('SELECT * FROM users WHERE id = %s', (user_id,))
+                return cur.fetchone()
+        except Exception as e:
+            logger.error(f"Error getting user: {e}")
+            return None
+
     def add_food_item(self, food_data):
         try:
             with self.conn.cursor() as cur:
