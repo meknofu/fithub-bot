@@ -427,12 +427,12 @@ class FithubBot:
 
         await update.message.reply_text(
             "🥤 *Добавление напитка*\n\n"
-            "Выберите способ добавления:",
+            "Введите название напитка или выберите категорию:",
             parse_mode='Markdown',
-            reply_markup=get_drink_method_keyboard()
+            reply_markup=get_drink_categories_keyboard()
         )
 
-        self.user_manager.set_user_state(user_id, 'awaiting_drink_method')
+        self.user_manager.set_user_state(user_id, 'awaiting_drink_category')
 
     async def handle_drink_method(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка выбора способа добавления напитка"""
@@ -448,19 +448,7 @@ class FithubBot:
             )
             self.user_manager.set_user_state(user_id, 'awaiting_drink_category')
 
-        elif 'скан штрих-кода' in method.lower():
-            await update.message.reply_text(
-                "📷 *Сканирование штрих-кода*\n\n"
-                "Отправьте фото штрих-кода с бутылки напитка.\n\n"
-                "📋 *Советы для лучшего сканирования:*\n"
-                "• Сфотографируйте штрих-код при хорошем освещении\n"
-                "• Держите камеру прямо напротив кода\n"
-                "• Убедитесь, что код полностью в кадре",
-                parse_mode='Markdown',
-                reply_markup=remove_keyboard()
-            )
-            self.user_manager.set_user_state(user_id, 'awaiting_barcode_photo')
-
+        # УБИРАЕМ блок сканирования штрих-кода
         else:
             await update.message.reply_text(
                 "Пожалуйста, выберите способ из предложенных:",

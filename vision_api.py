@@ -5,6 +5,7 @@ import json
 import os
 import random
 from config import Config
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -46,14 +47,25 @@ class VisionAPI:
             
             all_items = []
             
-            # Собираем все продукты
+            # Собираем все продукты с информацией о размере
             for obj in objects:
                 if self._is_food_item(obj.name) and obj.score > 0.5:
+                    # Рассчитываем относительный размер объекта
+                    bounding_poly = obj.bounding_poly
+                    if bounding_poly.normalized_vertices:
+                        width = abs(bounding_poly.normalized_vertices[1].x - bounding_poly.normalized_vertices[0].x)
+                        height = abs(bounding_poly.normalized_vertices[2].y - bounding_poly.normalized_vertices[0].y)
+                        area = width * height
+                    else:
+                        area = 0.1  # значение по умолчанию
+                    
                     all_items.append({
                         'name': obj.name,
                         'confidence': obj.score,
                         'type': 'object',
-                        'score': obj.score + 0.2
+                        'score': obj.score + 0.2,
+                        'area': area,
+                        'bounding_box': bounding_poly
                     })
             
             for label in labels:
@@ -62,7 +74,9 @@ class VisionAPI:
                         'name': label.description,
                         'confidence': label.score,
                         'type': 'label', 
-                        'score': label.score
+                        'score': label.score,
+                        'area': 0.1,  # для labels нет информации о размере
+                        'bounding_box': None
                     })
             
             # Умная группировка для бургеров и фастфуда
@@ -130,16 +144,19 @@ class VisionAPI:
                 'name': 'бургер',
                 'confidence': best_burger['confidence'],
                 'type': 'burger',
-                'score': best_burger['score']
+                'score': best_burger['score'],
+                'area': best_burger.get('area', 0.15)
             })
         # Или создаем бургер из компонентов
         elif component_items:
             best_component = max(component_items, key=lambda x: x['score'])
+            # Для компонентов увеличиваем предполагаемую площадь
             final_items.append({
                 'name': 'бургер',
                 'confidence': best_component['confidence'],
                 'type': 'burger_inferred',
-                'score': best_component['score']
+                'score': best_component['score'],
+                'area': best_component.get('area', 0.15) * 1.5
             })
         
         # Добавляем картошку фри если есть
@@ -150,18 +167,20 @@ class VisionAPI:
                 'name': 'картофель фри',
                 'confidence': best_fries['confidence'],
                 'type': 'fries',
-                'score': best_fries['score']
+                'score': best_fries['score'],
+                'area': best_fries.get('area', 0.08)
             })
         
         # Добавляем напиток если есть
-        drink_items = [item for item in items if any(kw in item['name'].lower() for kw in ['drink', 'напиток', 'cola', 'кофе'])]
+        drink_items = [item for item in items if any(kw in item['name'].lower() for kw in ['drink', 'напиток', 'cola', 'кофе', 'cup', 'стакан', 'бутылка'])]
         if drink_items and len(final_items) < 3:
             best_drink = max(drink_items, key=lambda x: x['score'])
             final_items.append({
                 'name': 'напиток',
                 'confidence': best_drink['confidence'],
                 'type': 'drink',
-                'score': best_drink['score']
+                'score': best_drink['score'],
+                'area': best_drink.get('area', 0.05)
             })
         
         # НЕ добавляем общие категории фастфуда если уже есть конкретные продукты
@@ -171,7 +190,8 @@ class VisionAPI:
                 'name': 'фастфуд',
                 'confidence': best_general['confidence'],
                 'type': 'fast_food',
-                'score': best_general['score']
+                'score': best_general['score'],
+                'area': best_general.get('area', 0.1)
             })
         
         return final_items[:3]  # Максимум 3 продукта
@@ -195,7 +215,8 @@ class VisionAPI:
                     'name': normalized_name,
                     'confidence': item['confidence'],
                     'type': item['type'],
-                    'score': item['score']
+                    'score': item['score'],
+                    'area': item.get('area', 0.1)
                 })
         
         return unique_items[:4]
@@ -235,7 +256,9 @@ class VisionAPI:
             'food', 'еда', 'meal', 'блюдо', 'fruit', 'фрукт', 'vegetable', 'овощ',
             'burger', 'бургер', 'pizza', 'пицца', 'sandwich', 'сэндвич', 'fish', 'рыба',
             'meat', 'мясо', 'chicken', 'курица', 'bread', 'хлеб', 'cheese', 'сыр',
-            'drink', 'напиток', 'coffee', 'кофе', 'soup', 'суп', 'salad', 'салат'
+            'drink', 'напиток', 'coffee', 'кофе', 'soup', 'суп', 'salad', 'салат',
+            'rice', 'рис', 'pasta', 'паста', 'noodle', 'лапша', 'egg', 'яйцо',
+            'cake', 'торт', 'dessert', 'десерт', 'ice cream', 'мороженое'
         ]
         
         return any(keyword in item_lower for keyword in food_keywords)
@@ -258,23 +281,85 @@ class VisionAPI:
         }
 
     def estimate_weights(self, food_items):
-        """Оценка веса"""
+        """Улучшенная оценка веса на основе типа еды и размера на фото"""
         estimated_weights = {}
         
         for item in food_items:
             name = item['name'].lower()
+            area = item.get('area', 0.1)  # относительная площадь объекта (0-1)
             
-            if name == 'бургер':
-                estimated_weights[name] = 250
-            elif name == 'картофель фри':
-                estimated_weights[name] = 150
-            elif name == 'напиток':
-                estimated_weights[name] = 330
-            elif name == 'фастфуд':
-                estimated_weights[name] = 300
-            elif any(word in name for word in ['салат', 'овощ', 'фрукт']):
-                estimated_weights[name] = 150
-            else:
-                estimated_weights[name] = 200
+            # Базовый вес в зависимости от типа еды
+            base_weights = {
+                'бургер': 250,
+                'картофель фри': 150,
+                'напиток': 330,
+                'фастфуд': 300,
+                'пицца': 350,
+                'сэндвич': 200,
+                'салат': 200,
+                'суп': 300,
+                'курица': 150,
+                'рыба': 200,
+                'мясо': 200,
+                'рис': 150,
+                'паста': 200,
+                'овощи': 150,
+                'фрукты': 150,
+                'хлеб': 100,
+                'сыр': 100,
+                'десерт': 150,
+                'мороженое': 100
+            }
+            
+            # Находим подходящий базовый вес
+            base_weight = 200  # значение по умолчанию
+            for food_type, weight in base_weights.items():
+                if food_type in name:
+                    base_weight = weight
+                    break
+            
+            # Корректируем вес на основе размера объекта
+            # area обычно от 0.01 (маленький объект) до 0.5 (большой объект)
+            size_multiplier = self._calculate_size_multiplier(area)
+            
+            # Дополнительные корректировки для специфичных типов
+            type_multiplier = self._get_type_multiplier(name)
+            
+            estimated_weight = base_weight * size_multiplier * type_multiplier
+            
+            # Ограничиваем разумными пределами
+            estimated_weight = max(50, min(estimated_weight, 1000))
+            
+            estimated_weights[name] = round(estimated_weight)
         
         return estimated_weights
+
+    def _calculate_size_multiplier(self, area):
+        """Рассчитывает множитель размера на основе площади объекта"""
+        if area < 0.05:
+            return 0.5   # Очень маленький объект
+        elif area < 0.1:
+            return 0.7   # Маленький объект
+        elif area < 0.2:
+            return 1.0   # Средний объект
+        elif area < 0.3:
+            return 1.3   # Большой объект
+        else:
+            return 1.6   # Очень большой объект
+
+    def _get_type_multiplier(self, food_name):
+        """Дополнительные корректировки для специфичных типов еды"""
+        if any(word in food_name for word in ['напиток', 'drink', 'кофе', 'чай', 'сок']):
+            return 1.0  # Напитки - стандартный расчет
+        
+        elif any(word in food_name for word in ['салат', 'суп', 'овощ', 'фрукт']):
+            return 1.2  # Объемные продукты с низкой плотностью
+        
+        elif any(word in food_name for word in ['бургер', 'пицца', 'сэндвич']):
+            return 1.1  # Комплексные блюда
+        
+        elif any(word in food_name for word in ['сыр', 'хлеб', 'десерт']):
+            return 0.9  # Плотные продукты
+        
+        else:
+            return 1.0  # Стандартный множитель

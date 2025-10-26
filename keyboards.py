@@ -27,7 +27,7 @@ def get_yes_no_keyboard():
 
 def get_drink_method_keyboard():
     keyboard = [
-        ['📝 Ввести название', '📷 Скан штрих-кода']
+        ['📝 Ввести название напитка']
     ]
     return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
 
