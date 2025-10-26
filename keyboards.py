@@ -25,5 +25,35 @@ def get_yes_no_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
 
+def get_drink_method_keyboard():
+    keyboard = [
+        ['📝 Ввести название', '📷 Скан штрих-кода']
+    ]
+    return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+
+def get_drink_categories_keyboard():
+    keyboard = [
+        ['💧 Вода', '🥤 Газировка', '☕ Кофе/Чай'],
+        ['🧃 Сок', '🥛 Молочное', '🍺 Алкоголь'],
+        ['⚡ Энергетик', '🏃‍♂️ Спортивное', '📝 Другое']
+    ]
+    return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+
+def get_popular_drinks_keyboard():
+    keyboard = [
+        ['💧 Вода', '🥤 Кола', '☕ Кофе'],
+        ['🧃 Апельсиновый сок', '🥛 Молоко', '🍺 Пиво'],
+        ['⚡ Red Bull', '🏃‍♂️ Изотоник', '📝 Другой напиток']
+    ]
+    return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+
+def get_drink_volumes_keyboard():
+    keyboard = [
+        ['🥤 250мл (стакан)', '🥤 330мл (банка)'],
+        ['🥤 500мл (бутылка)', '🥤 1000мл (литр)'],
+        ['📝 Другой объем']
+    ]
+    return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+
 def remove_keyboard():
     return ReplyKeyboardRemove()
