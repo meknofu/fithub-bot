@@ -55,5 +55,12 @@ def get_drink_volumes_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
 
+def get_reference_object_keyboard():
+    keyboard = [
+        ['🍴 Вилка', '🍴 Ложка', '📱 Телефон'],
+        ['💳 Карта', '👋 Ладонь', '🤷 Без ориентира']
+    ]
+    return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+
 def remove_keyboard():
     return ReplyKeyboardRemove()

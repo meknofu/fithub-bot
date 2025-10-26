@@ -63,6 +63,8 @@ class FithubBot:
             await self.handle_height(update, context)
         elif state == 'awaiting_weight':
             await self.handle_weight(update, context)
+        elif state == 'awaiting_reference_object':
+            await self.handle_reference_object(update, context)
         elif state == 'awaiting_trainer_id':
             await self.handle_trainer_id(update, context)
         elif state == 'awaiting_confirmation':
@@ -210,8 +212,26 @@ class FithubBot:
         await update.message.reply_text("🔍 Анализирую фото...")
 
         try:
-            # Анализ фото через Vision API
-            analysis_result = self.vision.detect_food_items(bytes(photo_bytes))
+            # Сначала анализируем без референса
+            analysis_result = self.vision.detect_food_items_with_reference(bytes(photo_bytes))
+
+            # Если не нашли референсные объекты, просим пользователя
+            if not analysis_result['reference_detected']:
+                await update.message.reply_text(
+                    "📏 *Для точного определения веса нужен ориентир!*\n\n"
+                    "Положите рядом с едой один из предметов:\n"
+                    "• 🍴 Вилка/ложка\n"
+                    "• 📱 Телефон\n"
+                    "• 💳 Банковскую карту\n"
+                    "• 👋 Вашу ладонь\n\n"
+                    "Или выберите предмет, который уже на фото:",
+                    parse_mode='Markdown',
+                    reply_markup=get_reference_object_keyboard()
+                )
+                self.user_manager.set_user_state(user_id, 'awaiting_reference_object', {
+                    'photo_bytes': photo_bytes
+                })
+                return
 
             # Сохраняем результаты анализа
             self.user_manager.set_user_state(user_id, 'awaiting_confirmation', {
@@ -219,35 +239,7 @@ class FithubBot:
                 'photo_bytes': photo_bytes
             })
 
-            if not analysis_result['food_items']:
-                await update.message.reply_text(
-                    "Не удалось определить конкретные продукты на фото. 😕\n"
-                    "Пожалуйста, введите название блюда вручную:"
-                )
-                self.user_manager.set_user_state(user_id, 'awaiting_food_name')
-                return
-
-            response = "📸 *На фото я определил:*\n\n"
-            total_calories = 0
-            total_weight = 0
-
-            for item in analysis_result['food_items']:
-                weight = analysis_result['estimated_weights'].get(item['name'].lower(), 100)
-                kbju = self.calculator.calculate_food_kbju(item['name'], weight)
-
-                response += (
-                    f"• *{item['name'].title()}* (~{weight}г):\n"
-                    f"  🍽️ {kbju['calories']} ккал | "
-                    f"🥩 {kbju['protein']}г | "
-                    f"🥑 {kbju['fat']}г | "
-                    f"🍚 {kbju['carbs']}г\n\n"
-                )
-                total_calories += kbju['calories']
-                total_weight += weight
-
-            response += f"📊 *Итого:* {total_calories} ккал (общий вес ~{total_weight}г)\n\n*Все верно?*"
-
-            await update.message.reply_text(response, parse_mode='Markdown', reply_markup=get_confirm_keyboard())
+            await self._send_food_analysis(update, analysis_result)
 
         except Exception as e:
             logger.error(f"Photo analysis error: {e}")
@@ -256,6 +248,78 @@ class FithubBot:
                 "Пожалуйста, введите название блюда вручную:"
             )
             self.user_manager.set_user_state(user_id, 'awaiting_food_name')
+
+    async def handle_reference_object(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        user_data = self.user_manager.get_user_data(user_id)
+        reference_choice = update.message.text
+
+        reference_mapping = {
+            '🍴 Вилка': 'fork',
+            '🍴 Ложка': 'spoon',
+            '📱 Телефон': 'phone',
+            '💳 Карта': 'credit card',
+            '👋 Ладонь': 'hand',
+            '🤷 Без ориентира': None
+        }
+
+        reference_object = reference_mapping.get(reference_choice)
+
+        try:
+            # Повторно анализируем фото с учетом референсного объекта
+            analysis_result = self.vision.detect_food_items_with_reference(
+                user_data['photo_bytes'],
+                reference_object
+            )
+
+            # Сохраняем результаты
+            self.user_manager.set_user_state(user_id, 'awaiting_confirmation', {
+                'analysis_result': analysis_result,
+                'photo_bytes': user_data['photo_bytes']
+            })
+
+            await self._send_food_analysis(update, analysis_result)
+
+        except Exception as e:
+            logger.error(f"Reference analysis error: {e}")
+            await update.message.reply_text(
+                "Ошибка при анализе. Попробуйте другое фото или введите название вручную:"
+            )
+            self.user_manager.set_user_state(user_id, 'awaiting_food_name')
+
+    # Вспомогательный метод для отправки анализа
+    async def _send_food_analysis(self, update, analysis_result):
+        if not analysis_result['food_items']:
+            await update.message.reply_text(
+                "Не удалось определить конкретные продукты на фото. 😕\n"
+                "Пожалуйста, введите название блюда вручную:"
+            )
+            return
+
+        response = "📸 *На фото я определил:*\n\n"
+        total_calories = 0
+
+        for item in analysis_result['food_items']:
+            weight = analysis_result['estimated_weights'].get(item['name'].lower(), 100)
+            kbju = self.calculator.calculate_food_kbju(item['name'], weight)
+
+            response += (
+                f"• *{item['name'].title()}* (~{int(weight)}г):\n"
+                f"  🍽️ {kbju['calories']} ккал | "
+                f"🥩 {kbju['protein']}г | "
+                f"🥑 {kbju['fat']}г | "
+                f"🍚 {kbju['carbs']}г\n\n"
+            )
+            total_calories += kbju['calories']
+
+        if analysis_result['reference_detected']:
+            response += "📏 *Определено по ориентиру на фото*\n\n"
+        else:
+            response += "📏 *Определено примерно*\n\n"
+
+        response += f"📊 *Итого:* {int(total_calories)} ккал\n\n*Все верно?*"
+
+        await update.message.reply_text(response, parse_mode='Markdown', reply_markup=get_confirm_keyboard())
 
     async def handle_confirmation(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка подтверждения результатов анализа"""
@@ -730,39 +794,27 @@ class FithubBot:
 
     # Команды статистики и отчетов
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработка команды /help"""
         help_text = """
-🤖 *Помощь по использованию FITHUB*
+    🤖 *Помощь по использованию FITHUB*
 
-*Основные команды:*
-/start - Запустить бота
-/stats - Статистика питания
-/profile - Мой профиль
-/report - Отчет за сегодня
-/reset - Сбросить статистику за сегодня
-/id - Мой ID для тренера
-/drink - Добавить напиток
+    *Советы для лучшего распознавания:*
+    • 📸 Сфотографируйте еду сверху
+    • 📏 Положите рядом вилку, телефон или карту для точного определения веса
+    • ☀️ Используйте хорошее освещение
+    • 🍽️ Фотографируйте на однотонном фоне
 
-*Для тренеров:*
-/add_trainee - Добавить ученика
-/trainees - Мои ученики
+    *Основные команды:*
+    /start - Запустить бота
+    /stats - Статистика питания
+    /profile - Мой профиль
+    /drink - Добавить напиток
 
-*Как использовать:*
-1. Отправьте фото еды 📸
-2. Бот определит продукты и КБЖУ
-3. Подтвердите или исправьте вручную
-4. Выберите тип приема пищи
-
-*Для напитков:*
-Используйте /drink для добавления напитков с автоматическим расчетом КБЖУ
-
-*Примеры названий блюд для ручного ввода:*
-• Курица гриль
-• Гречневая каша  
-• Салат цезарь
-• Рыба с овощами
-• Творог с фруктами
-"""
+    *Примеры названий блюд:*
+    • Курица гриль
+    • Гречневая каша  
+    • Салат цезарь
+    • Рыба с овощами
+    """
         await update.message.reply_text(help_text, parse_mode='Markdown')
 
     async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
