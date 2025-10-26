@@ -2,6 +2,7 @@ from google.cloud import vision
 import io
 import logging
 import math
+from config import Config  # ДОБАВЛЯЕМ ЭТОТ ИМПОРТ
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ class VisionAPI:
             logger.error(f"Google Vision initialization failed: {e}")
             self.client = None
 
+    # Остальной код остается без изменений...
     def detect_food_items_with_reference(self, image_content, reference_object=None):
         """Распознавание еды с учетом референсного объекта"""
         if not self.client:
@@ -189,16 +191,183 @@ class VisionAPI:
         # Ограничиваем разумными пределами
         return max(30, min(estimated_weight, 2000))
 
-    # Остальные методы остаются без изменений...
     def _smart_burger_grouping(self, items):
-        # ... (предыдущая реализация)
-        pass
-    
+        """Умная группировка для бургеров и фастфуда"""
+        if not items:
+            return []
+        
+        items.sort(key=lambda x: x['score'], reverse=True)
+        
+        # Определяем, есть ли бургер на фото
+        has_burger = any('бургер' in item['name'].lower() or 'burger' in item['name'].lower() for item in items)
+        has_burger_components = any(comp in item['name'].lower() for item in items for comp in ['bun', 'bread', 'булка', 'котлета', 'patty'])
+        
+        # Если есть бургер или его компоненты, применяем специальную логику
+        if has_burger or has_burger_components:
+            return self._group_burger_items(items)
+        else:
+            return self._remove_duplicates_and_general(items)
+
+    def _group_burger_items(self, items):
+        """Группирует компоненты бургера в один продукт"""
+        burger_keywords = [
+            'бургер', 'burger', 'гамбургер', 'чизбургер', 'hamburger', 'cheeseburger'
+        ]
+        
+        burger_component_keywords = [
+            'bun', 'bread', 'булка', 'булочка', 'patty', 'котлета', 
+            'beef', 'говядина', 'cheese', 'сыр', 'lettuce', 'салат',
+            'tomato', 'помидор', 'onion', 'лук', 'sauce', 'соус'
+        ]
+        
+        general_fast_food = [
+            'fast food', 'finger food', 'junk food', 'фастфуд'
+        ]
+        
+        # Находим самый уверенный бургер
+        burger_items = [item for item in items if any(kw in item['name'].lower() for kw in burger_keywords)]
+        component_items = [item for item in items if any(kw in item['name'].lower() for kw in burger_component_keywords)]
+        general_items = [item for item in items if any(kw in item['name'].lower() for kw in general_fast_food)]
+        
+        final_items = []
+        
+        # Добавляем бургер (если нашли)
+        if burger_items:
+            best_burger = max(burger_items, key=lambda x: x['score'])
+            final_items.append({
+                'name': 'бургер',
+                'confidence': best_burger['confidence'],
+                'type': 'burger',
+                'score': best_burger['score'],
+                'area': best_burger.get('area', 0.15)
+            })
+        # Или создаем бургер из компонентов
+        elif component_items:
+            best_component = max(component_items, key=lambda x: x['score'])
+            # Для компонентов увеличиваем предполагаемую площадь
+            final_items.append({
+                'name': 'бургер',
+                'confidence': best_component['confidence'],
+                'type': 'burger_inferred',
+                'score': best_component['score'],
+                'area': best_component.get('area', 0.15) * 1.5
+            })
+        
+        # Добавляем картошку фри если есть
+        fries_items = [item for item in items if any(kw in item['name'].lower() for kw in ['fries', 'фри', 'картофель'])]
+        if fries_items:
+            best_fries = max(fries_items, key=lambda x: x['score'])
+            final_items.append({
+                'name': 'картофель фри',
+                'confidence': best_fries['confidence'],
+                'type': 'fries',
+                'score': best_fries['score'],
+                'area': best_fries.get('area', 0.08)
+            })
+        
+        # Добавляем напиток если есть
+        drink_items = [item for item in items if any(kw in item['name'].lower() for kw in ['drink', 'напиток', 'cola', 'кофе', 'cup', 'стакан', 'бутылка'])]
+        if drink_items and len(final_items) < 3:
+            best_drink = max(drink_items, key=lambda x: x['score'])
+            final_items.append({
+                'name': 'напиток',
+                'confidence': best_drink['confidence'],
+                'type': 'drink',
+                'score': best_drink['score'],
+                'area': best_drink.get('area', 0.05)
+            })
+        
+        # НЕ добавляем общие категории фастфуда если уже есть конкретные продукты
+        if not final_items and general_items:
+            best_general = max(general_items, key=lambda x: x['score'])
+            final_items.append({
+                'name': 'фастфуд',
+                'confidence': best_general['confidence'],
+                'type': 'fast_food',
+                'score': best_general['score'],
+                'area': best_general.get('area', 0.1)
+            })
+        
+        return final_items[:3]  # Максимум 3 продукта
+
+    def _remove_duplicates_and_general(self, items):
+        """Убирает дубликаты и общие категории для обычной еды"""
+        seen_names = set()
+        unique_items = []
+        
+        for item in items:
+            original_name = item['name'].lower()
+            normalized_name = self._normalize_name(original_name)
+            
+            # Пропускаем общие категории
+            if self._is_general_category(normalized_name):
+                continue
+                
+            if normalized_name not in seen_names:
+                seen_names.add(normalized_name)
+                unique_items.append({
+                    'name': normalized_name,
+                    'confidence': item['confidence'],
+                    'type': item['type'],
+                    'score': item['score'],
+                    'area': item.get('area', 0.1)
+                })
+        
+        return unique_items[:4]
+
+    def _normalize_name(self, name):
+        """Нормализует названия"""
+        name_lower = name.lower()
+        
+        exact_synonyms = {
+            'гамбургер': 'бургер',
+            'чизбургер': 'бургер', 
+            'hamburger': 'бургер',
+            'cheeseburger': 'бургер',
+            'френч фри': 'картофель фри',
+            'french fries': 'картофель фри',
+            'fries': 'картофель фри',
+            'coca-cola': 'кола',
+            'coke': 'кола',
+            'pepsi': 'кола',
+            'пепси': 'кола',
+        }
+        
+        if name_lower in exact_synonyms:
+            return exact_synonyms[name_lower]
+        
+        for original, replacement in exact_synonyms.items():
+            if original in name_lower:
+                return replacement
+        
+        return name_lower
+
     def _is_food_item(self, item_name):
-        # ... (предыдущая реализация)
-        pass
+        """Проверяет, является ли объект едой"""
+        item_lower = item_name.lower()
+        
+        food_keywords = [
+            'food', 'еда', 'meal', 'блюдо', 'fruit', 'фрукт', 'vegetable', 'овощ',
+            'burger', 'бургер', 'pizza', 'пицца', 'sandwich', 'сэндвич', 'fish', 'рыба',
+            'meat', 'мясо', 'chicken', 'курица', 'bread', 'хлеб', 'cheese', 'сыр',
+            'drink', 'напиток', 'coffee', 'кофе', 'soup', 'суп', 'salad', 'салат',
+            'rice', 'рис', 'pasta', 'паста', 'noodle', 'лапша', 'egg', 'яйцо',
+            'cake', 'торт', 'dessert', 'десерт', 'ice cream', 'мороженое'
+        ]
+        
+        return any(keyword in item_lower for keyword in food_keywords)
+
+    def _is_general_category(self, item_name):
+        """Фильтрует общие категории"""
+        general_categories = [
+            'food', 'cuisine', 'meal', 'dish', 'ingredient', 'produce',
+            'fast food', 'finger food', 'junk food', 'фастфуд'
+        ]
+        
+        return item_name in general_categories
 
     def _get_fallback_response(self):
+        """Fallback"""
         return {
             'food_items': [],
             'reference_detected': False,
