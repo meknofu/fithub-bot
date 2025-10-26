@@ -45,9 +45,9 @@ class FithubBot:
         user_id = update.effective_user.id
         message_text = update.message.text
         state = self.user_manager.get_user_state(user_id)
-        
+
         logger.info(f"User {user_id} state: {state}, message: {message_text}")
-        
+
         if state == 'awaiting_user_type':
             await self.handle_user_type(update, context)
         elif state == 'awaiting_height':
@@ -64,10 +64,17 @@ class FithubBot:
             await self.handle_manual_weight(update, context)
         elif state == 'awaiting_meal_type':
             await self.handle_meal_type(update, context)
+        # Новые состояния для напитков
+        elif state == 'awaiting_drink_name':
+            await self.handle_drink_name(update, context)
+        elif state == 'awaiting_drink_volume':
+            await self.handle_drink_volume(update, context)
+        elif state == 'awaiting_drink_confirmation':
+            await self.handle_drink_confirmation(update, context)
         else:
-            # Если состояние не определено, предлагаем отправить фото
             await update.message.reply_text(
-                "Отправьте фото еды для анализа или используйте команды.",
+                "Отправьте фото еды для анализа или используйте команды.\n"
+                "Используйте /drink чтобы добавить напиток.",
                 reply_markup=remove_keyboard()
             )
 
@@ -681,12 +688,128 @@ class FithubBot:
                 "❌ Произошла ошибка при получении списка учеников."
             )
 
+    async def drink_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка команды /drink - добавление напитка"""
+        user_id = update.effective_user.id
+
+        await update.message.reply_text(
+            "🥤 *Добавление напитка*\n\n"
+            "Выберите способ:\n"
+            "• Ввести название и объем напитка\n"
+            "• Отправить фото штрих-кода на бутылке\n\n"
+            "Введите название напитка:",
+            parse_mode='Markdown',
+            reply_markup=remove_keyboard()
+        )
+
+        self.user_manager.set_user_state(user_id, 'awaiting_drink_name')
+
+    async def handle_drink_name(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка ввода названия напитка"""
+        user_id = update.effective_user.id
+        drink_name = update.message.text
+
+        if not drink_name.strip():
+            await update.message.reply_text("Пожалуйста, введите название напитка:")
+            return
+
+        self.user_manager.set_user_state(user_id, 'awaiting_drink_volume', {
+            'drink_name': drink_name.strip()
+        })
+
+        await update.message.reply_text(
+            f"Введите объем напитка '{drink_name}' в мл:\n\n"
+            "Примеры:\n"
+            "• 250 (для стакана)\n"
+            "• 330 (для банки)\n"
+            "• 500 (для бутылки)\n"
+            "• 1000 (для литровой бутылки)",
+            reply_markup=remove_keyboard()
+        )
+
+    async def handle_drink_volume(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка ввода объема напитка"""
+        user_id = update.effective_user.id
+        user_data = self.user_manager.get_user_data(user_id)
+
+        try:
+            volume_ml = float(update.message.text)
+            drink_name = user_data['drink_name']
+
+            if volume_ml <= 0 or volume_ml > 5000:
+                await update.message.reply_text("Пожалуйста, введите корректный объем (1-5000 мл):")
+                return
+
+            # Рассчитываем КБЖУ для напитка
+            from drink_manager import DrinkManager
+            drink_manager = DrinkManager()
+            kbju = drink_manager.get_drink_kbju(drink_name, volume_ml)
+
+            response = (
+                f"🥤 *{drink_name.title()}* ({volume_ml}мл):\n\n"
+                f"• 🍽️ Калории: {kbju['calories']} ккал\n"
+                f"• 🥩 Белки: {kbju['protein']}г\n"
+                f"• 🥑 Жиры: {kbju['fat']}г\n"
+                f"• 🍚 Углеводы: {kbju['carbs']}г\n\n"
+                "Сохранить напиток?"
+            )
+
+            self.user_manager.set_user_state(user_id, 'awaiting_drink_confirmation', {
+                'drink_name': drink_name,
+                'volume_ml': volume_ml,
+                'kbju': kbju
+            })
+
+            await update.message.reply_text(response, parse_mode='Markdown', reply_markup=get_yes_no_keyboard())
+
+        except ValueError:
+            await update.message.reply_text("Пожалуйста, введите число (объем в мл):")
+
+    async def handle_drink_confirmation(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка подтверждения напитка"""
+        user_id = update.effective_user.id
+        message_text = update.message.text
+        user_data = self.user_manager.get_user_data(user_id)
+
+        if 'да' in message_text.lower():
+            # Сохраняем напиток в базу
+            self.db.add_meal(
+                user_id=user_id,
+                food_name=f"{user_data['drink_name']} (напиток)",
+                weight_grams=user_data['volume_ml'],  # Используем мл как вес
+                calories=user_data['kbju']['calories'],
+                protein=user_data['kbju']['protein'],
+                fat=user_data['kbju']['fat'],
+                carbs=user_data['kbju']['carbs'],
+                meal_type='drink'
+            )
+
+            await update.message.reply_text(
+                "✅ Напиток сохранен!\n\n"
+                "Можете добавить еще напитков или еды.",
+                reply_markup=remove_keyboard()
+            )
+            self.user_manager.set_user_state(user_id, 'ready')
+
+        elif 'нет' in message_text.lower():
+            await update.message.reply_text(
+                "Напиток не сохранен.\n\n"
+                "Можете добавить другой напиток или еду.",
+                reply_markup=remove_keyboard()
+            )
+            self.user_manager.set_user_state(user_id, 'ready')
+        else:
+            await update.message.reply_text(
+                "Пожалуйста, выберите Да или Нет:",
+                reply_markup=get_yes_no_keyboard()
+            )
+
     async def daily_summary(self, context: ContextTypes.DEFAULT_TYPE):
         """Ежедневный отчет по питанию"""
         pass
 
     def run(self):
-        """Запуск бота"""
+        """Запуск бота с напоминаниями"""
         application = Application.builder().token(Config.BOT_TOKEN).build()
 
         # Добавляем обработчики команд
@@ -697,12 +820,19 @@ class FithubBot:
         application.add_handler(CommandHandler("report", self.report_command))
         application.add_handler(CommandHandler("reset", self.reset_command))
         application.add_handler(CommandHandler("id", self.id_command))
+        application.add_handler(CommandHandler("drink", self.drink_command))
         application.add_handler(CommandHandler("add_trainee", self.add_trainee_command))
         application.add_handler(CommandHandler("trainees", self.trainees_command))
 
         # Обработчики сообщений
         application.add_handler(MessageHandler(filters.PHOTO, self.handle_photo))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
+
+        # Запускаем напоминания в фоне
+        application.job_queue.run_once(
+            lambda context: asyncio.create_task(self.user_manager.start_meal_reminders(application)),
+            5
+        )
 
         # Запускаем бота
         application.run_polling()
