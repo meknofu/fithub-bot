@@ -6,6 +6,7 @@ from database import db
 from vision_api import VisionAPI
 from kbju_calculator import KBJUCalculator
 from user_manager import UserManager
+from drink_manager import DrinkManager
 from keyboards import *
 import io
 from datetime import datetime
@@ -810,6 +811,7 @@ class FithubBot:
 
     def run(self):
         """Запуск бота с напоминаниями"""
+        # Создаем Application с JobQueue
         application = Application.builder().token(Config.BOT_TOKEN).build()
 
         # Добавляем обработчики команд
@@ -828,14 +830,75 @@ class FithubBot:
         application.add_handler(MessageHandler(filters.PHOTO, self.handle_photo))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
 
-        # Запускаем напоминания в фоне
-        application.job_queue.run_once(
-            lambda context: asyncio.create_task(self.user_manager.start_meal_reminders(application)),
-            5
-        )
+        # Запускаем напоминания если JobQueue доступен
+        if application.job_queue:
+            # Запускаем проверку напоминаний каждую минуту
+            application.job_queue.run_repeating(
+                self._check_meal_reminders,
+                interval=60,  # Каждую минуту
+                first=10  # Первый запуск через 10 секунд
+            )
+            logger.info("Meal reminders system started")
+        else:
+            logger.warning("JobQueue not available - meal reminders disabled")
 
         # Запускаем бота
         application.run_polling()
+
+    async def _check_meal_reminders(self, context: ContextTypes.DEFAULT_TYPE):
+        """Проверяет и отправляет напоминания о приемах пищи"""
+        try:
+            now = datetime.now()
+
+            # Время напоминаний (часы, минуты, сообщение)
+            reminder_times = [
+                (8, 0,
+                 "🍳 *Время завтрака!*\n\nНе забудьте позавтракать и записать прием пищи. Это поможет поддерживать метаболизм в течение дня."),
+                (13, 0, "🍲 *Время обеда!*\n\nПора подкрепиться! Отправьте фото обеда или введите его вручную."),
+                (19, 0,
+                 "🍽️ *Время ужина!*\n\nЛегкий ужин за 3-4 часа до сна поможет хорошо выспаться и сохранить форму."),
+                (11, 0, "☕ *Время перекуса!*\n\nНебольшой перекус поможет дождаться обеда без чувства голода."),
+                (16, 0, "🍎 *Время полдника!*\n\nВторой перекус поддержит энергию до вечера.")
+            ]
+
+            for hour, minute, message in reminder_times:
+                if now.hour == hour and now.minute == minute:
+                    await self._send_reminders_to_active_users(context, message)
+
+        except Exception as e:
+            logger.error(f"Error in meal reminders: {e}")
+
+    async def _send_reminders_to_active_users(self, context: ContextTypes.DEFAULT_TYPE, message):
+        """Отправляет напоминания активным пользователям"""
+        try:
+            # Получаем список пользователей, которые сегодня были активны
+            today = datetime.now().strftime('%Y-%m-%d')
+            active_users = self._get_todays_active_users(today)
+
+            for user_id in active_users:
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=message,
+                        parse_mode='Markdown'
+                    )
+                    logger.info(f"Meal reminder sent to user {user_id}")
+                except Exception as e:
+                    logger.error(f"Failed to send reminder to {user_id}: {e}")
+
+        except Exception as e:
+            logger.error(f"Error sending reminders: {e}")
+
+    def _get_todays_active_users(self, date):
+        """Получает список пользователей, активных сегодня"""
+        try:
+            # Временно возвращаем пустой список чтобы не спамить
+            # В реальной реализации здесь будет запрос к базе данных
+            # Например: SELECT DISTINCT user_id FROM meals WHERE DATE(created_at) = %s
+            return []
+        except Exception as e:
+            logger.error(f"Error getting active users: {e}")
+            return []
 
 if __name__ == '__main__':
     bot = FithubBot()
