@@ -25,7 +25,7 @@ class VisionAPI:
             self.client = None
 
     def detect_food_items(self, image_content):
-        """Основная функция распознавания еды (рабочая версия)"""
+        """Основная функция распознавания еды"""
         if not self.client:
             return self._get_fallback_response()
             
@@ -42,13 +42,15 @@ class VisionAPI:
             text_response = self.client.text_detection(image=image)
             texts = text_response.text_annotations
             
+            logger.info(f"Found {len(objects)} objects and {len(labels)} labels")
+            
             all_items = []
             
-            # Собираем все продукты
+            # Собираем все продукты из objects
             for obj in objects:
                 if self._is_food_item(obj.name) and obj.score > 0.5:
-                    # Рассчитываем относительный размер объекта
                     area = self._calculate_object_area(obj)
+                    logger.info(f"Food object: {obj.name} (score: {obj.score}, area: {area})")
                     
                     all_items.append({
                         'name': obj.name,
@@ -58,206 +60,172 @@ class VisionAPI:
                         'area': area
                     })
             
+            # Собираем все продукты из labels
             for label in labels:
                 if self._is_food_item(label.description) and label.score > 0.6:
+                    logger.info(f"Food label: {label.description} (score: {label.score})")
+                    
                     all_items.append({
                         'name': label.description,
                         'confidence': label.score,
                         'type': 'label', 
                         'score': label.score,
-                        'area': 0.1
+                        'area': 0.15  # средняя площадь для labels
                     })
             
             # Умная группировка для бургеров и фастфуда
             food_items = self._smart_burger_grouping(all_items)
+            
+            logger.info(f"After grouping: {len(food_items)} food items")
             
             if not food_items:
                 return self._get_fallback_response()
             
             detected_text = texts[0].description if texts else ""
             
-            # Пытаемся найти референсные объекты для улучшения оценки веса
-            reference_objects = self._find_reference_objects(objects)
+            # Оцениваем вес
+            estimated_weights = self.estimate_weights(food_items)
+            logger.info(f"Estimated weights: {estimated_weights}")
             
             return {
                 'food_items': food_items,
                 'detected_text': detected_text,
-                'estimated_weights': self.estimate_weights(food_items, reference_objects),
-                'reference_detected': bool(reference_objects),
-                'reference_objects': reference_objects
+                'estimated_weights': estimated_weights
             }
             
         except Exception as e:
             logger.error(f"Vision API error: {e}")
             return self._get_fallback_response()
 
-    def _find_reference_objects(self, objects):
-        """Находит референсные объекты на фото"""
-        reference_keywords = {
-            'fork': ['fork', 'вилка', 'столовый прибор'],
-            'spoon': ['spoon', 'ложка', 'ложечка'],
-            'knife': ['knife', 'нож'],
-            'phone': ['phone', 'mobile phone', 'телефон', 'смартфон', 'iphone'],
-            'credit card': ['credit card', 'банковская карта', 'карта'],
-            'hand': ['hand', 'рука', 'ладонь']
-        }
-        
-        references = []
-        for obj in objects:
-            for ref_type, keywords in reference_keywords.items():
-                if any(keyword in obj.name.lower() for keyword in keywords) and obj.score > 0.6:
-                    area = self._calculate_object_area(obj)
-                    references.append({
-                        'type': ref_type,
-                        'name': obj.name,
-                        'confidence': obj.score,
-                        'area': area
-                    })
-        
-        return references
-
-    def estimate_weights(self, food_items, reference_objects=None):
-        """Улучшенная оценка веса с учетом референсных объектов"""
+    def estimate_weights(self, food_items):
+        """Упрощенная и надежная оценка веса"""
         estimated_weights = {}
-        
-        # Определяем базовый размер на основе референсов
-        base_size = self._get_base_size_from_references(reference_objects)
         
         for item in food_items:
             name = item['name'].lower()
             area = item.get('area', 0.1)
             
-            # Базовый вес в зависимости от типа еды
-            base_weights = {
-                'бургер': 250,
-                'картофель фри': 150,
-                'напиток': 330,
-                'фастфуд': 300,
-                'пицца': 350,
-                'сэндвич': 200,
-                'салат': 200,
-                'суп': 300,
-                'курица': 150,
-                'рыба': 200,
-                'мясо': 200,
-                'рис': 150,
-                'паста': 200,
-                'овощи': 150,
-                'фрукты': 150,
-                'хлеб': 100,
-                'сыр': 100,
-                'десерт': 150,
-                'мороженое': 100,
-                'яйцо': 50,
-                'яичница': 120,
-                'омлет': 200
-            }
+            logger.info(f"Estimating weight for: {name} (area: {area})")
             
-            # Находим подходящий базовый вес
+            # Базовые веса для разных типов еды
+            weight_rules = [
+                # Напитки
+                (['напиток', 'drink', 'кофе', 'чай', 'сок', 'cola', 'пепси'], 330),
+                (['вода', 'water', 'минеральная'], 500),
+                
+                # Фастфуд
+                (['бургер', 'burger', 'гамбургер', 'чизбургер'], 250),
+                (['картофель фри', 'fries', 'фри'], 150),
+                (['пицца', 'pizza'], 300),
+                (['сэндвич', 'sandwich', 'бургер'], 200),
+                (['фастфуд', 'fast food'], 350),
+                
+                # Основные блюда
+                (['курица', 'chicken', 'цыпленок'], 180),
+                (['рыба', 'fish', 'лосось', 'тунец'], 200),
+                (['мясо', 'meat', 'говядина', 'свинина'], 220),
+                (['стейк', 'steak'], 250),
+                
+                # Гарниры
+                (['рис', 'rice'], 150),
+                (['паста', 'pasta', 'макароны', 'спагетти'], 200),
+                (['картофель', 'potato'], 180),
+                (['гречка', 'гречневая'], 150),
+                (['пюре', 'пюре картофельное'], 200),
+                
+                # Салаты и овощи
+                (['салат', 'salad'], 150),
+                (['овощ', 'vegetable', 'огур', 'помидор', 'морков'], 120),
+                (['суп', 'soup', 'борщ'], 300),
+                
+                # Завтраки
+                (['яичница', 'омлет', 'eggs', 'яйцо'], 120),
+                (['каша', 'овсянка', ' oatmeal'], 200),
+                (['блины', 'pancake', 'блин'], 150),
+                
+                # Десерты
+                (['десерт', 'dessert', 'торт', 'cake', 'пирог'], 150),
+                (['мороженое', 'ice cream'], 100),
+                (['йогурт', 'yogurt'], 150),
+                
+                # Хлеб и выпечка
+                (['хлеб', 'bread', 'булка'], 100),
+                (['сыр', 'cheese'], 80),
+            ]
+            
+            # Ищем подходящее правило
             base_weight = 200  # значение по умолчанию
-            for food_type, weight in base_weights.items():
-                if food_type in name:
+            for keywords, weight in weight_rules:
+                if any(keyword in name for keyword in keywords):
                     base_weight = weight
+                    logger.info(f"Found match: {keywords} -> {weight}g")
                     break
             
-            # Корректируем вес на основе размера объекта и референса
-            size_multiplier = self._calculate_size_multiplier(area, base_size)
-            
-            # Дополнительные корректировки для специфичных типов
-            type_multiplier = self._get_type_multiplier(name)
-            
-            estimated_weight = base_weight * size_multiplier * type_multiplier
+            # Корректируем вес на основе размера
+            size_multiplier = self._calculate_size_multiplier(area)
+            estimated_weight = base_weight * size_multiplier
             
             # Ограничиваем разумными пределами
             estimated_weight = max(50, min(estimated_weight, 1000))
             
-            estimated_weights[name] = round(estimated_weight)
+            estimated_weights[name] = int(estimated_weight)
+            logger.info(f"Final weight for {name}: {estimated_weights[name]}g (base: {base_weight}, multiplier: {size_multiplier})")
         
         return estimated_weights
 
-    def _get_base_size_from_references(self, reference_objects):
-        """Определяет базовый размер на основе референсных объектов"""
-        if not reference_objects:
-            return 'medium'  # средний размер по умолчанию
+    def _calculate_size_multiplier(self, area):
+        """Рассчитывает множитель размера на основе площади"""
+        logger.info(f"Calculating size multiplier for area: {area}")
         
-        # Анализируем размер референсных объектов относительно всей сцены
-        total_reference_area = sum(ref['area'] for ref in reference_objects)
-        avg_reference_area = total_reference_area / len(reference_objects)
-        
-        if avg_reference_area < 0.05:
-            return 'small'
-        elif avg_reference_area > 0.2:
-            return 'large'
+        if area < 0.03:
+            multiplier = 0.5   # Очень маленький
+        elif area < 0.07:
+            multiplier = 0.7   # Маленький
+        elif area < 0.15:
+            multiplier = 1.0   # Средний
+        elif area < 0.25:
+            multiplier = 1.4   # Большой
         else:
-            return 'medium'
-
-    def _calculate_size_multiplier(self, area, base_size):
-        """Рассчитывает множитель размера"""
-        # Базовые множители в зависимости от общего размера сцены
-        base_multipliers = {
-            'small': 0.7,
-            'medium': 1.0,
-            'large': 1.3
-        }
-        
-        base_multiplier = base_multipliers.get(base_size, 1.0)
-        
-        # Корректировка на основе площади конкретного объекта
-        if area < 0.05:
-            return base_multiplier * 0.6
-        elif area < 0.1:
-            return base_multiplier * 0.8
-        elif area < 0.2:
-            return base_multiplier * 1.0
-        elif area < 0.3:
-            return base_multiplier * 1.2
-        else:
-            return base_multiplier * 1.5
+            multiplier = 1.8   # Очень большой
+            
+        logger.info(f"Size multiplier: {multiplier}")
+        return multiplier
 
     def _calculate_object_area(self, obj):
-        """Рассчитывает площадь объекта в нормализованных координатах"""
+        """Рассчитывает площадь объекта"""
         if not obj.bounding_poly.normalized_vertices:
             return 0.1
         
         vertices = obj.bounding_poly.normalized_vertices
         width = abs(vertices[1].x - vertices[0].x)
         height = abs(vertices[2].y - vertices[0].y)
-        return width * height
+        area = width * height
+        
+        logger.info(f"Object area calculation: {obj.name} -> width: {width:.3f}, height: {height:.3f}, area: {area:.3f}")
+        return area
 
-    def _get_type_multiplier(self, food_name):
-        """Дополнительные корректировки для специфичных типов еды"""
-        if any(word in food_name for word in ['напиток', 'drink', 'кофе', 'чай', 'сок']):
-            return 1.0
-        
-        elif any(word in food_name for word in ['салат', 'суп', 'овощ', 'фрукт']):
-            return 1.2
-        
-        elif any(word in food_name for word in ['бургер', 'пицца', 'сэндвич']):
-            return 1.1
-        
-        elif any(word in food_name for word in ['сыр', 'хлеб', 'десерт']):
-            return 0.9
-        
-        else:
-            return 1.0
-
-    # Остальные методы остаются без изменений...
     def _smart_burger_grouping(self, items):
         """Умная группировка для бургеров и фастфуда"""
         if not items:
             return []
         
         items.sort(key=lambda x: x['score'], reverse=True)
+        logger.info(f"Items before grouping: {[item['name'] for item in items]}")
         
         # Определяем, есть ли бургер на фото
         has_burger = any('бургер' in item['name'].lower() or 'burger' in item['name'].lower() for item in items)
         has_burger_components = any(comp in item['name'].lower() for item in items for comp in ['bun', 'bread', 'булка', 'котлета', 'patty'])
         
+        logger.info(f"Has burger: {has_burger}, has components: {has_burger_components}")
+        
         # Если есть бургер или его компоненты, применяем специальную логику
         if has_burger or has_burger_components:
-            return self._group_burger_items(items)
+            result = self._group_burger_items(items)
         else:
-            return self._remove_duplicates_and_general(items)
+            result = self._remove_duplicates_and_general(items)
+        
+        logger.info(f"Items after grouping: {[item['name'] for item in result]}")
+        return result
 
     def _group_burger_items(self, items):
         """Группирует компоненты бургера в один продукт"""
@@ -265,9 +233,71 @@ class VisionAPI:
             'бургер', 'burger', 'гамбургер', 'чизбургер', 'hamburger', 'cheeseburger'
         ]
         
-        # Остальная логика группировки...
+        burger_component_keywords = [
+            'bun', 'bread', 'булка', 'булочка', 'patty', 'котлета', 
+            'beef', 'говядина', 'cheese', 'сыр', 'lettuce', 'салат',
+            'tomato', 'помидор', 'onion', 'лук', 'sauce', 'соус'
+        ]
+        
+        # Находим самый уверенный бургер
         burger_items = [item for item in items if any(kw in item['name'].lower() for kw in burger_keywords)]
-        # ... (предыдущая реализация)
+        component_items = [item for item in items if any(kw in item['name'].lower() for kw in burger_component_keywords)]
+        
+        final_items = []
+        
+        # Добавляем бургер (если нашли)
+        if burger_items:
+            best_burger = max(burger_items, key=lambda x: x['score'])
+            # Объединяем площадь компонентов для более точной оценки
+            total_area = best_burger.get('area', 0.15)
+            if component_items:
+                total_area += sum(item.get('area', 0.05) for item in component_items[:3]) * 0.3
+            
+            final_items.append({
+                'name': 'бургер',
+                'confidence': best_burger['confidence'],
+                'type': 'burger',
+                'score': best_burger['score'],
+                'area': min(total_area, 0.4)  # ограничиваем максимальную площадь
+            })
+        # Или создаем бургер из компонентов
+        elif component_items:
+            best_component = max(component_items, key=lambda x: x['score'])
+            total_area = best_component.get('area', 0.15) * 1.5
+            
+            final_items.append({
+                'name': 'бургер',
+                'confidence': best_component['confidence'],
+                'type': 'burger_inferred',
+                'score': best_component['score'],
+                'area': total_area
+            })
+        
+        # Добавляем картошку фри если есть
+        fries_items = [item for item in items if any(kw in item['name'].lower() for kw in ['fries', 'фри', 'картофель'])]
+        if fries_items:
+            best_fries = max(fries_items, key=lambda x: x['score'])
+            final_items.append({
+                'name': 'картофель фри',
+                'confidence': best_fries['confidence'],
+                'type': 'fries',
+                'score': best_fries['score'],
+                'area': best_fries.get('area', 0.08)
+            })
+        
+        # Добавляем напиток если есть
+        drink_items = [item for item in items if any(kw in item['name'].lower() for kw in ['drink', 'напиток', 'cola', 'кофе', 'cup', 'стакан', 'бутылка'])]
+        if drink_items and len(final_items) < 3:
+            best_drink = max(drink_items, key=lambda x: x['score'])
+            final_items.append({
+                'name': 'напиток',
+                'confidence': best_drink['confidence'],
+                'type': 'drink',
+                'score': best_drink['score'],
+                'area': best_drink.get('area', 0.05)
+            })
+        
+        return final_items[:3]
 
     def _remove_duplicates_and_general(self, items):
         """Убирает дубликаты и общие категории"""
@@ -278,6 +308,7 @@ class VisionAPI:
             original_name = item['name'].lower()
             normalized_name = self._normalize_name(original_name)
             
+            # Пропускаем общие категории
             if self._is_general_category(normalized_name):
                 continue
                 
@@ -325,7 +356,8 @@ class VisionAPI:
             'drink', 'напиток', 'coffee', 'кофе', 'soup', 'суп', 'salad', 'салат',
             'rice', 'рис', 'pasta', 'паста', 'noodle', 'лапша', 'egg', 'яйцо',
             'cake', 'торт', 'dessert', 'десерт', 'ice cream', 'мороженое',
-            'breakfast', 'завтрак', 'lunch', 'обед', 'dinner', 'ужин'
+            'breakfast', 'завтрак', 'lunch', 'обед', 'dinner', 'ужин',
+            'potato', 'картофель', 'tomato', 'помидор', 'cucumber', 'огурец'
         ]
         
         return any(keyword in item_lower for keyword in food_keywords)
@@ -345,7 +377,5 @@ class VisionAPI:
         return {
             'food_items': [],
             'detected_text': 'Не удалось определить конкретные продукты',
-            'estimated_weights': {},
-            'reference_detected': False,
-            'reference_objects': []
+            'estimated_weights': {}
         }
