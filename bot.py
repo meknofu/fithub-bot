@@ -212,26 +212,8 @@ class FithubBot:
         await update.message.reply_text("🔍 Анализирую фото...")
 
         try:
-            # Сначала анализируем без референса
-            analysis_result = self.vision.detect_food_items_with_reference(bytes(photo_bytes))
-
-            # Если не нашли референсные объекты, просим пользователя
-            if not analysis_result['reference_detected']:
-                await update.message.reply_text(
-                    "📏 *Для точного определения веса нужен ориентир!*\n\n"
-                    "Положите рядом с едой один из предметов:\n"
-                    "• 🍴 Вилка/ложка\n"
-                    "• 📱 Телефон\n"
-                    "• 💳 Банковскую карту\n"
-                    "• 👋 Вашу ладонь\n\n"
-                    "Или выберите предмет, который уже на фото:",
-                    parse_mode='Markdown',
-                    reply_markup=get_reference_object_keyboard()
-                )
-                self.user_manager.set_user_state(user_id, 'awaiting_reference_object', {
-                    'photo_bytes': photo_bytes
-                })
-                return
+            # Используем старую проверенную функцию
+            analysis_result = self.vision.detect_food_items(bytes(photo_bytes))
 
             # Сохраняем результаты анализа
             self.user_manager.set_user_state(user_id, 'awaiting_confirmation', {
@@ -239,7 +221,41 @@ class FithubBot:
                 'photo_bytes': photo_bytes
             })
 
-            await self._send_food_analysis(update, analysis_result)
+            if not analysis_result['food_items']:
+                await update.message.reply_text(
+                    "Не удалось определить конкретные продукты на фото. 😕\n"
+                    "Пожалуйста, введите название блюда вручную:"
+                )
+                self.user_manager.set_user_state(user_id, 'awaiting_food_name')
+                return
+
+            response = "📸 *На фото я определил:*\n\n"
+            total_calories = 0
+            total_weight = 0
+
+            for item in analysis_result['food_items']:
+                weight = analysis_result['estimated_weights'].get(item['name'].lower(), 100)
+                kbju = self.calculator.calculate_food_kbju(item['name'], weight)
+
+                response += (
+                    f"• *{item['name'].title()}* (~{int(weight)}г):\n"
+                    f"  🍽️ {kbju['calories']} ккал | "
+                    f"🥩 {kbju['protein']}г | "
+                    f"🥑 {kbju['fat']}г | "
+                    f"🍚 {kbju['carbs']}г\n\n"
+                )
+                total_calories += kbju['calories']
+                total_weight += weight
+
+            # Добавляем информацию о референсах если они найдены
+            if analysis_result.get('reference_detected'):
+                response += "📏 *Определено с помощью ориентира на фото*\n\n"
+            else:
+                response += "💡 *Совет:* Для большей точности положите рядом вилку или телефон\n\n"
+
+            response += f"📊 *Итого:* {int(total_calories)} ккал (общий вес ~{int(total_weight)}г)\n\n*Все верно?*"
+
+            await update.message.reply_text(response, parse_mode='Markdown', reply_markup=get_confirm_keyboard())
 
         except Exception as e:
             logger.error(f"Photo analysis error: {e}")
