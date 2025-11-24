@@ -611,30 +611,32 @@ class FithubBot:
             await self.save_drink(update, user_id, volume_ml)
         except ValueError:
             await update.message.reply_text("Please enter a valid number:")
-    
+
     async def save_drink(self, update, user_id, volume_ml):
         """Save drink to database"""
         data = self.user_manager.get_user_data(user_id)
         drink_name = data.get('drink_name', 'Unknown')
-        
+
+        # Get nutrition (this returns TOTAL for volume, not per 100ml)
         drink_info = self.drink_manager.get_drink_nutrition(drink_name, volume_ml)
-        
+
         if not drink_info:
             drink_info = {'calories': 0, 'protein': 0, 'fat': 0, 'carbs': 0}
-        
+
+        # Save to database - USE VALUES DIRECTLY, don't multiply again
         drink_data = {
             'user_id': user_id,
             'drink_name': drink_name,
             'volume_ml': volume_ml,
-            'calories': drink_info['calories'],
-            'protein': drink_info['protein'],
-            'fat': drink_info['fat'],
-            'carbs': drink_info['carbs'],
+            'calories': drink_info['calories'],  # Already calculated for total volume
+            'protein': drink_info['protein'],  # Already calculated for total volume
+            'fat': drink_info['fat'],  # Already calculated for total volume
+            'carbs': drink_info['carbs'],  # Already calculated for total volume
             'date': datetime.now().strftime('%Y-%m-%d')
         }
-        
+
         logger.info(f"Saving drink for user {user_id}: {drink_data}")
-        
+
         if self.db.save_drink(drink_data):
             await update.message.reply_html(
                 f"<b>Drink saved!</b>\n\n"
@@ -652,7 +654,7 @@ class FithubBot:
                 "Error saving drink. Please try again.",
                 reply_markup=self.remove_keyboard()
             )
-    
+
     async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle photo messages"""
         user_id = update.effective_user.id
