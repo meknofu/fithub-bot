@@ -34,11 +34,26 @@ class Database:
                     logger.error("Max database connection retries reached")
                     raise
                 time.sleep(2)
-    
+
     def init_tables(self):
         """Initialize database tables"""
         try:
             with self.conn.cursor() as cur:
+                # Check if tables need migration
+                cur.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'meals'
+                """)
+                meals_columns = [row[0] for row in cur.fetchall()] if cur.rowcount > 0 else []
+
+                # If wrong structure, drop and recreate
+                if meals_columns and ('food_name' in meals_columns or 'total_calories' not in meals_columns):
+                    logger.warning("Detected wrong meals table structure, dropping tables...")
+                    cur.execute('DROP TABLE IF EXISTS meal_items CASCADE')
+                    cur.execute('DROP TABLE IF EXISTS meals CASCADE')
+                    cur.execute('DROP TABLE IF EXISTS drinks CASCADE')
+
                 # Users table
                 cur.execute('''
                     CREATE TABLE IF NOT EXISTS users (
@@ -58,7 +73,7 @@ class Database:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
-                
+
                 # Trainer-trainee relationship table
                 cur.execute('''
                     CREATE TABLE IF NOT EXISTS trainer_trainee (
@@ -67,7 +82,7 @@ class Database:
                         PRIMARY KEY (trainer_id, trainee_id)
                     )
                 ''')
-                
+
                 # Food items table
                 cur.execute('''
                     CREATE TABLE IF NOT EXISTS food_items (
@@ -80,7 +95,7 @@ class Database:
                         per_grams INTEGER DEFAULT 100
                     )
                 ''')
-                
+
                 # Meals table (for meal summaries)
                 cur.execute('''
                     CREATE TABLE IF NOT EXISTS meals (
@@ -95,8 +110,8 @@ class Database:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
-                
-                # Meal items table (individual food items in each meal)
+
+                # Meal items table
                 cur.execute('''
                     CREATE TABLE IF NOT EXISTS meal_items (
                         id SERIAL PRIMARY KEY,
@@ -109,7 +124,7 @@ class Database:
                         carbs FLOAT
                     )
                 ''')
-                
+
                 # Drinks table
                 cur.execute('''
                     CREATE TABLE IF NOT EXISTS drinks (
@@ -125,13 +140,13 @@ class Database:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
-                
+
                 self.conn.commit()
                 logger.info("Database tables initialized")
         except Exception as e:
             logger.error(f"Table initialization error: {e}")
             self.conn.rollback()
-    
+
     def save_user(self, user_data):
         """Save or update user"""
         try:
