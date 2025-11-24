@@ -105,59 +105,32 @@ class FithubBot:
         except Exception as e:
             logger.error(f"Error in start command: {e}", exc_info=True)
             await update.message.reply_text("Sorry, an error occurred. Please try again.")
-    
+
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle all text messages based on user state"""
         try:
             user_id = update.effective_user.id
             text = update.message.text
-            
+
             if text.strip().startswith('/'):
                 return
-            
+
             state = self.user_manager.get_user_state(user_id)
-            
+
             logger.info(f"User {user_id} in state {state} sent: {text}")
-            
+
             if state == 'awaiting_user_type':
                 await self.handle_user_type_selection(update, text)
             elif state == 'awaiting_height':
                 await self.handle_height_input(update, text)
-            elif state == 'awaiting_weight':
-                await self.handle_weight_input(update, text)
-            elif state == 'awaiting_age':
-                await self.handle_age_input(update, text)
-            elif state == 'awaiting_gender':
-                await self.handle_gender_selection(update, text)
-            elif state == 'awaiting_activity_level':
-                await self.handle_activity_level_selection(update, text)
-            elif state == 'awaiting_goal':
-                await self.handle_goal_selection(update, text)
-            elif state == 'awaiting_meal_type':
-                await self.handle_meal_type_selection(update, text)
-            elif state == 'awaiting_photo_confirmation':
-                await self.handle_photo_confirmation(update, text)
-            elif state == 'awaiting_manual_input':
-                await self.handle_manual_food_input(update, text)
-            elif state == 'awaiting_final_confirmation':
-                await self.handle_final_confirmation(update, text)
-            elif state == 'awaiting_drink_name':
-                await self.handle_drink_name_input(update, text)
-            elif state == 'awaiting_drink_volume':
-                await self.handle_drink_volume_selection(update, text)
-            elif state == 'awaiting_custom_volume':
-                await self.handle_custom_volume_input(update, text)
+            # ... all your other states ...
+            elif state == 'awaiting_trainee_id':
+                await self.handle_trainee_id_input(update, text)  # ADD THIS
             else:
                 await update.message.reply_text(
                     "I didn't understand that. Use /help to see available commands."
                 )
-                
-        except Exception as e:
-            logger.error(f"Error in handle_message: {e}", exc_info=True)
-            await update.message.reply_text(
-                "Sorry, an error occurred. Please use /start to restart."
-            )
-    
+
     async def handle_user_type_selection(self, update: Update, text: str):
         """Handle user type selection"""
         user_id = update.effective_user.id
@@ -898,23 +871,448 @@ class FithubBot:
                 reply_markup=self.remove_keyboard()
             )
 
+    async def add_trainee_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /add_trainee command"""
+        user_id = update.effective_user.id
+
+        try:
+            # Check if user is a trainer
+            profile = self.db.get_user_profile(user_id)
+            if not profile or profile.get('user_type') != 'trainer':
+                await update.message.reply_text(
+                    "This command is only available for trainers.\n\n"
+                    "Please register as a trainer using /start"
+                )
+                return
+
+            await update.message.reply_text(
+                "To add a trainee, please provide their Telegram username or user ID.\n\n"
+                "<b>Format:</b>\n"
+                "@username or user_id\n\n"
+                "<b>Example:</b>\n"
+                "@john_doe\n"
+                "or\n"
+                "123456789",
+                reply_markup=self.remove_keyboard(),
+                parse_mode='HTML'
+            )
+
+            self.user_manager.set_user_state(user_id, 'awaiting_trainee_id')
+
+        except Exception as e:
+            logger.error(f"Error in add_trainee command: {e}", exc_info=True)
+            await update.message.reply_text("Error processing command. Please try again.")
+
+    async def my_trainees_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /my_trainees command"""
+        user_id = update.effective_user.id
+
+        try:
+            # Check if user is a trainer
+            profile = self.db.get_user_profile(user_id)
+            if not profile or profile.get('user_type') != 'trainer':
+                await update.message.reply_text(
+                    "This command is only available for trainers.\n\n"
+                    "Please register as a trainer using /start"
+                )
+                return
+
+            # Get trainees
+            trainees = self.db.get_trainees(user_id)
+
+            if not trainees:
+                await update.message.reply_text(
+                    "You don't have any trainees yet.\n\n"
+                    "Use /add_trainee to add your first trainee!"
+                )
+                return
+
+            # Build trainee list
+            trainee_list = []
+            for i, trainee in enumerate(trainees, 1):
+                name = trainee.get('first_name', 'Unknown')
+                username = trainee.get('username', 'N/A')
+                user_type = trainee.get('user_type', 'trainee')
+
+                trainee_list.append(
+                    f"{i}. <b>{name}</b>\n"
+                    f"   Username: @{username}\n"
+                    f"   ID: <code>{trainee['id']}</code>"
+                )
+
+            trainees_text = "\n\n".join(trainee_list)
+
+            await update.message.reply_html(
+                f"<b>Your Trainees ({len(trainees)}):</b>\n\n"
+                f"{trainees_text}\n\n"
+                f"Use /stats to view their nutrition statistics."
+            )
+
+        except Exception as e:
+            logger.error(f"Error in my_trainees command: {e}", exc_info=True)
+            await update.message.reply_text("Error getting trainees. Please try again.")
+
+    async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /stats command"""
+        user_id = update.effective_user.id
+
+        try:
+            # Check if user is a trainer
+            profile = self.db.get_user_profile(user_id)
+            if not profile or profile.get('user_type') != 'trainer':
+                await update.message.reply_text(
+                    "This command is only available for trainers.\n\n"
+                    "Please register as a trainer using /start"
+                )
+                return
+
+            # Get trainees
+            trainees = self.db.get_trainees(user_id)
+
+            if not trainees:
+                await update.message.reply_text(
+                    "You don't have any trainees yet.\n\n"
+                    "Use /add_trainee to add trainees first."
+                )
+                return
+
+            # Get today's date
+            today = datetime.now().strftime('%Y-%m-%d')
+
+            # Build stats for each trainee
+            stats_list = []
+            for trainee in trainees:
+                trainee_id = trainee['id']
+                name = trainee.get('first_name', 'Unknown')
+
+                # Get today's intake
+                remaining = self.calculator.get_remaining_cpfc(trainee_id, today)
+
+                if remaining:
+                    consumed_cal = remaining['consumed_calories']
+                    target_cal = remaining['target_calories']
+                    progress = (consumed_cal / target_cal * 100) if target_cal > 0 else 0
+
+                    stats_list.append(
+                        f"<b>{name}</b>\n"
+                        f"Calories: {consumed_cal:.0f} / {target_cal:.0f} ({progress:.0f}%)\n"
+                        f"Protein: {remaining['consumed_protein']:.0f}g\n"
+                        f"Fat: {remaining['consumed_fat']:.0f}g\n"
+                        f"Carbs: {remaining['consumed_carbs']:.0f}g"
+                    )
+                else:
+                    stats_list.append(
+                        f"<b>{name}</b>\n"
+                        f"No data for today"
+                    )
+
+            stats_text = "\n\n".join(stats_list)
+
+            await update.message.reply_html(
+                f"<b>Trainee Statistics (Today):</b>\n\n"
+                f"{stats_text}"
+            )
+
+        except Exception as e:
+            logger.error(f"Error in stats command: {e}", exc_info=True)
+            await update.message.reply_text("Error getting statistics. Please try again.")
+
+    async def handle_trainee_id_input(self, update: Update, text: str):
+        """Handle trainee ID input after /add_trainee"""
+        user_id = update.effective_user.id
+
+        try:
+            # Parse trainee ID (remove @ if username provided)
+            trainee_identifier = text.strip().replace('@', '')
+
+            # Try to find trainee by username or ID
+            trainee_id = None
+
+            # Check if it's a numeric ID
+            if trainee_identifier.isdigit():
+                trainee_id = int(trainee_identifier)
+            else:
+                # Search by username (you may need to add a method to search by username)
+                await update.message.reply_text(
+                    "Username lookup not yet implemented.\n\n"
+                    "Please provide the trainee's numeric user ID.\n\n"
+                    "They can find their ID by messaging @userinfobot"
+                )
+                return
+
+            # Check if trainee exists
+            trainee_profile = self.db.get_user_profile(trainee_id)
+
+            if not trainee_profile:
+                await update.message.reply_text(
+                    f"User with ID {trainee_id} not found.\n\n"
+                    "Make sure they have started the bot first using /start"
+                )
+                return
+
+            # Link trainer and trainee
+            success = self.db.link_trainer_trainee(user_id, trainee_id)
+
+            if success:
+                trainee_name = trainee_profile.get('first_name', 'Unknown')
+                await update.message.reply_html(
+                    f"<b>Trainee added successfully!</b>\n\n"
+                    f"Name: {trainee_name}\n"
+                    f"ID: {trainee_id}\n\n"
+                    f"You can now view their statistics using /stats"
+                )
+                self.user_manager.set_user_state(user_id, 'main_menu')
+            else:
+                await update.message.reply_text(
+                    "Error adding trainee. Please try again."
+                )
+
+        except Exception as e:
+            logger.error(f"Error handling trainee ID: {e}", exc_info=True)
+            await update.message.reply_text(
+                "Error processing trainee ID. Please try again with /add_trainee"
+            )
+            self.user_manager.set_user_state(user_id, 'main_menu')
+
+    async def add_trainee_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /add_trainee command"""
+        user_id = update.effective_user.id
+
+        try:
+            # Check if user is a trainer
+            profile = self.db.get_user_profile(user_id)
+            if not profile or profile.get('user_type') != 'trainer':
+                await update.message.reply_text(
+                    "This command is only available for trainers.\n\n"
+                    "Please register as a trainer using /start"
+                )
+                return
+
+            await update.message.reply_text(
+                "To add a trainee, please provide their Telegram username or user ID.\n\n"
+                "<b>Format:</b>\n"
+                "@username or user_id\n\n"
+                "<b>Example:</b>\n"
+                "@john_doe\n"
+                "or\n"
+                "123456789",
+                reply_markup=self.remove_keyboard(),
+                parse_mode='HTML'
+            )
+
+            self.user_manager.set_user_state(user_id, 'awaiting_trainee_id')
+
+        except Exception as e:
+            logger.error(f"Error in add_trainee command: {e}", exc_info=True)
+            await update.message.reply_text("Error processing command. Please try again.")
+
+    async def my_trainees_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /my_trainees command"""
+        user_id = update.effective_user.id
+
+        try:
+            # Check if user is a trainer
+            profile = self.db.get_user_profile(user_id)
+            if not profile or profile.get('user_type') != 'trainer':
+                await update.message.reply_text(
+                    "This command is only available for trainers.\n\n"
+                    "Please register as a trainer using /start"
+                )
+                return
+
+            # Get trainees
+            trainees = self.db.get_trainees(user_id)
+
+            if not trainees:
+                await update.message.reply_text(
+                    "You don't have any trainees yet.\n\n"
+                    "Use /add_trainee to add your first trainee!"
+                )
+                return
+
+            # Build trainee list
+            trainee_list = []
+            for i, trainee in enumerate(trainees, 1):
+                name = trainee.get('first_name', 'Unknown')
+                username = trainee.get('username', 'N/A')
+                user_type = trainee.get('user_type', 'trainee')
+
+                trainee_list.append(
+                    f"{i}. <b>{name}</b>\n"
+                    f"   Username: @{username}\n"
+                    f"   ID: <code>{trainee['id']}</code>"
+                )
+
+            trainees_text = "\n\n".join(trainee_list)
+
+            await update.message.reply_html(
+                f"<b>Your Trainees ({len(trainees)}):</b>\n\n"
+                f"{trainees_text}\n\n"
+                f"Use /stats to view their nutrition statistics."
+            )
+
+        except Exception as e:
+            logger.error(f"Error in my_trainees command: {e}", exc_info=True)
+            await update.message.reply_text("Error getting trainees. Please try again.")
+
+    async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /stats command"""
+        user_id = update.effective_user.id
+
+        try:
+            # Check if user is a trainer
+            profile = self.db.get_user_profile(user_id)
+            if not profile or profile.get('user_type') != 'trainer':
+                await update.message.reply_text(
+                    "This command is only available for trainers.\n\n"
+                    "Please register as a trainer using /start"
+                )
+                return
+
+            # Get trainees
+            trainees = self.db.get_trainees(user_id)
+
+            if not trainees:
+                await update.message.reply_text(
+                    "You don't have any trainees yet.\n\n"
+                    "Use /add_trainee to add trainees first."
+                )
+                return
+
+            # Get today's date
+            today = datetime.now().strftime('%Y-%m-%d')
+
+            # Build stats for each trainee
+            stats_list = []
+            for trainee in trainees:
+                trainee_id = trainee['id']
+                name = trainee.get('first_name', 'Unknown')
+
+                # Get today's intake
+                remaining = self.calculator.get_remaining_cpfc(trainee_id, today)
+
+                if remaining:
+                    consumed_cal = remaining['consumed_calories']
+                    target_cal = remaining['target_calories']
+                    progress = (consumed_cal / target_cal * 100) if target_cal > 0 else 0
+
+                    stats_list.append(
+                        f"<b>{name}</b>\n"
+                        f"Calories: {consumed_cal:.0f} / {target_cal:.0f} ({progress:.0f}%)\n"
+                        f"Protein: {remaining['consumed_protein']:.0f}g\n"
+                        f"Fat: {remaining['consumed_fat']:.0f}g\n"
+                        f"Carbs: {remaining['consumed_carbs']:.0f}g"
+                    )
+                else:
+                    stats_list.append(
+                        f"<b>{name}</b>\n"
+                        f"No data for today"
+                    )
+
+            stats_text = "\n\n".join(stats_list)
+
+            await update.message.reply_html(
+                f"<b>Trainee Statistics (Today):</b>\n\n"
+                f"{stats_text}"
+            )
+
+        except Exception as e:
+            logger.error(f"Error in stats command: {e}", exc_info=True)
+            await update.message.reply_text("Error getting statistics. Please try again.")
+
+    async def handle_trainee_id_input(self, update: Update, text: str):
+        """Handle trainee ID input after /add_trainee"""
+        user_id = update.effective_user.id
+
+        try:
+            # Parse trainee ID (remove @ if username provided)
+            trainee_identifier = text.strip().replace('@', '')
+
+            # Try to find trainee by username or ID
+            trainee_id = None
+
+            # Check if it's a numeric ID
+            if trainee_identifier.isdigit():
+                trainee_id = int(trainee_identifier)
+            else:
+                # Search by username (you may need to add a method to search by username)
+                await update.message.reply_text(
+                    "Username lookup not yet implemented.\n\n"
+                    "Please provide the trainee's numeric user ID.\n\n"
+                    "They can find their ID by messaging @userinfobot"
+                )
+                return
+
+            # Check if trainee exists
+            trainee_profile = self.db.get_user_profile(trainee_id)
+
+            if not trainee_profile:
+                await update.message.reply_text(
+                    f"User with ID {trainee_id} not found.\n\n"
+                    "Make sure they have started the bot first using /start"
+                )
+                return
+
+            # Link trainer and trainee
+            success = self.db.link_trainer_trainee(user_id, trainee_id)
+
+            if success:
+                trainee_name = trainee_profile.get('first_name', 'Unknown')
+                await update.message.reply_html(
+                    f"<b>Trainee added successfully!</b>\n\n"
+                    f"Name: {trainee_name}\n"
+                    f"ID: {trainee_id}\n\n"
+                    f"You can now view their statistics using /stats"
+                )
+                self.user_manager.set_user_state(user_id, 'main_menu')
+            else:
+                await update.message.reply_text(
+                    "Error adding trainee. Please try again."
+                )
+
+        except Exception as e:
+            logger.error(f"Error handling trainee ID: {e}", exc_info=True)
+            await update.message.reply_text(
+                "Error processing trainee ID. Please try again with /add_trainee"
+            )
+            self.user_manager.set_user_state(user_id, 'main_menu')
+
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command"""
-        await update.message.reply_html(
+        user_id = update.effective_user.id
+        profile = self.db.get_user_profile(user_id)
+
+        # Basic commands for everyone
+        help_text = (
             "<b>Available Commands:</b>\n\n"
-            "/start - Start bot\n"
-            "/restart - Reset your profile and start over\n"
+            "/start - Start/Register bot\n"
+            "/restart - Reset your profile\n"
             "/add_meal - Add meal\n"
             "/add_drink - Add drink\n"
             "/today - Today's summary\n"
             "/profile - View profile\n"
-            "/help - This help message\n\n"
-            "<b>How it works:</b>\n\n"
+            "/help - This help message\n"
+        )
+
+        # Add trainer commands if user is a trainer
+        if profile and profile.get('user_type') == 'trainer':
+            help_text += (
+                "\n<b>Trainer Commands:</b>\n\n"
+                "/add_trainee - Add a trainee\n"
+                "/my_trainees - View your trainees\n"
+                "/stats - View trainee statistics\n"
+            )
+
+        help_text += (
+            "\n<b>How it works:</b>\n\n"
             "1. Complete your profile\n"
             "2. Add meals by photo or manually\n"
             "3. Track your daily nutrition\n"
             "4. Achieve your goals!"
         )
+
+        await update.message.reply_html(help_text)
+
 
 def main():
     """Main function to run the bot"""
@@ -940,7 +1338,10 @@ def main():
         application.add_handler(CommandHandler("today", bot.today_command))
         application.add_handler(CommandHandler("profile", bot.profile_command))
         application.add_handler(CommandHandler("help", bot.help_command))
-        
+        application.add_handler(CommandHandler("add_trainee", bot.add_trainee_command))
+        application.add_handler(CommandHandler("my_trainees", bot.my_trainees_command))
+        application.add_handler(CommandHandler("stats", bot.stats_command))
+
         # Message handlers
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
         application.add_handler(MessageHandler(filters.PHOTO, bot.handle_photo))
