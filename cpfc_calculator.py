@@ -243,4 +243,4 @@ class CPFCCalculator:
         except Exception as e:
             logger.error(f"Error calculating remaining CPFC: {e}", exc_info=True)
             return None
-        
+

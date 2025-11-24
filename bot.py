@@ -811,12 +811,57 @@ class FithubBot:
             await update.message.reply_text(
                 "Profile not found. Please complete registration using /start"
             )
-    
+
+    async def restart_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /restart command - completely reset user profile and data"""
+        user_id = update.effective_user.id
+
+        try:
+            # Delete user's meals and drinks
+            with self.db.conn.cursor() as cur:
+                cur.execute('DELETE FROM meals WHERE user_id = %s', (user_id,))
+                cur.execute('DELETE FROM drinks WHERE user_id = %s', (user_id,))
+
+                # Reset user profile fields
+                cur.execute('''
+                    UPDATE users 
+                    SET height = NULL, 
+                        weight = NULL, 
+                        age = NULL, 
+                        gender = NULL, 
+                        activity_level = NULL, 
+                        goal = NULL, 
+                        daily_calories = NULL
+                    WHERE id = %s
+                ''', (user_id,))
+
+                self.db.conn.commit()
+
+            logger.info(f"User {user_id} data cleared")
+
+            # Clear user state
+            self.user_manager.set_user_state(user_id, 'awaiting_user_type')
+
+            # Show welcome message
+            await update.message.reply_html(
+                f"<b>Your profile has been reset!</b>\n\n"
+                f"All your meal history and settings have been deleted.\n\n"
+                f"Let's start fresh!\n\n"
+                f"Who are you?",
+                reply_markup=self.get_user_type_keyboard()
+            )
+
+        except Exception as e:
+            logger.error(f"Error in restart command: {e}", exc_info=True)
+            self.db.conn.rollback()
+            await update.message.reply_text("Sorry, an error occurred. Please try /start")
+
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command"""
         await update.message.reply_html(
             "<b>Available Commands:</b>\n\n"
-            "/start - Start/Restart bot\n"
+            "/start - Start bot\n"
+            "/restart - Reset your profile and start over\n"
             "/add_meal - Add meal\n"
             "/add_drink - Add drink\n"
             "/today - Today's summary\n"
@@ -847,6 +892,7 @@ def main():
         
         # Register command handlers BEFORE message handlers
         application.add_handler(CommandHandler("start", bot.start))
+        application.add_handler(CommandHandler("restart", bot.restart_command))
         application.add_handler(CommandHandler("add_meal", bot.add_meal_command))
         application.add_handler(CommandHandler("add_drink", bot.add_drink_command))
         application.add_handler(CommandHandler("today", bot.today_command))
