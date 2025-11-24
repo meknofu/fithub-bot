@@ -287,8 +287,164 @@ class FithubBot:
             await update.message.reply_text(
                 "Sorry, an error occurred processing your message. Please try again or use /start to restart."
             )
-    
-    # [Rest of your methods with try-except blocks added]
+
+        # Add these methods to your FithubBot class, right after handle_photo method:
+
+        async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+            user_id = update.effective_user.id
+            state = self.user_manager.get_user_state(user_id)
+
+            if state == 'awaiting_food_photo':
+                await update.message.reply_text("🔍 Analyzing photo...")
+
+                # Get the largest photo
+                photo = update.message.photo[-1]
+                photo_file = await photo.get_file()
+                photo_bytes = await photo_file.download_as_bytearray()
+
+                # Recognize food
+                result = self.vision.detect_food_items(bytes(photo_bytes))
+
+                if result['success'] and result['items']:
+                    items_text = "\n".join([
+                        f"• {item['name']} (confidence: {item['confidence'] * 100:.0f}%)"
+                        for item in result['items'][:5]
+                    ])
+
+                    data = self.user_manager.get_user_data(user_id)
+                    data['recognized_items'] = result['items'][:5]
+                    self.user_manager.set_user_state(user_id, 'awaiting_manual_input', data)
+
+                    await update.message.reply_html(
+                        f"✅ <b>Recognized:</b>\n\n"
+                        f"{items_text}\n\n"
+                        f"Please enter the weights for each item.\n\n"
+                        f"Format: food name - weight in grams\n"
+                        f"Example:\n"
+                        f"Chicken - 150\n"
+                        f"Rice - 100",
+                        reply_markup=remove_keyboard()
+                    )
+                else:
+                    await update.message.reply_text(
+                        "❌ Could not recognize food in the photo.\n\n"
+                        "Please enter food items manually.\n\n"
+                        "Format: food name - weight in grams\n"
+                        "Example:\n"
+                        "Chicken - 150\n"
+                        "Rice - 100",
+                        reply_markup=remove_keyboard()
+                    )
+                    self.user_manager.set_user_state(user_id, 'awaiting_manual_input')
+            else:
+                await update.message.reply_text("Please use /add_meal to start adding a meal.")
+
+        # Commands
+        async def add_meal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+            user_id = update.effective_user.id
+
+            await update.message.reply_text(
+                "🍽️ Select meal type:",
+                reply_markup=get_meal_type_keyboard()
+            )
+            self.user_manager.set_user_state(user_id, 'awaiting_meal_type')
+
+        async def add_drink_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+            user_id = update.effective_user.id
+
+            await update.message.reply_text(
+                "🥤 Enter drink name (e.g., Cola, Coffee, Orange Juice):",
+                reply_markup=remove_keyboard()
+            )
+            self.user_manager.set_user_state(user_id, 'awaiting_drink_name')
+
+        async def today_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+            user_id = update.effective_user.id
+
+            remaining = self.calculator.get_remaining_cpfc(
+                user_id,
+                datetime.now().strftime('%Y-%m-%d')
+            )
+
+            if remaining:
+                progress_calories = (remaining['consumed_calories'] / remaining['target_calories']) * 100 if remaining[
+                                                                                                                 'target_calories'] > 0 else 0
+                progress_protein = (remaining['consumed_protein'] / remaining['target_protein']) * 100 if remaining[
+                                                                                                              'target_protein'] > 0 else 0
+                progress_fat = (remaining['consumed_fat'] / remaining['target_fat']) * 100 if remaining[
+                                                                                                  'target_fat'] > 0 else 0
+                progress_carbs = (remaining['consumed_carbs'] / remaining['target_carbs']) * 100 if remaining[
+                                                                                                        'target_carbs'] > 0 else 0
+
+                await update.message.reply_html(
+                    f"📊 <b>Today's Summary</b>\n\n"
+                    f"<b>Consumed / Target:</b>\n\n"
+                    f"🔥 Calories: <b>{remaining['consumed_calories']:.0f}</b> / {remaining['target_calories']:.0f} kcal ({progress_calories:.0f}%)\n"
+                    f"🥩 Protein: <b>{remaining['consumed_protein']:.0f}</b> / {remaining['target_protein']:.0f} g ({progress_protein:.0f}%)\n"
+                    f"🥑 Fat: <b>{remaining['consumed_fat']:.0f}</b> / {remaining['target_fat']:.0f} g ({progress_fat:.0f}%)\n"
+                    f"🍞 Carbs: <b>{remaining['consumed_carbs']:.0f}</b> / {remaining['target_carbs']:.0f} g ({progress_carbs:.0f}%)\n\n"
+                    f"<b>Remaining:</b>\n\n"
+                    f"🔥 Calories: <b>{remaining['remaining_calories']:.0f} kcal</b>\n"
+                    f"🥩 Protein: <b>{remaining['remaining_protein']:.0f} g</b>\n"
+                    f"🥑 Fat: <b>{remaining['remaining_fat']:.0f} g</b>\n"
+                    f"🍞 Carbs: <b>{remaining['remaining_carbs']:.0f} g</b>"
+                )
+            else:
+                await update.message.reply_text(
+                    "Please complete your profile first using /start"
+                )
+
+        async def profile_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+            user_id = update.effective_user.id
+            profile = self.db.get_user_profile(user_id)
+
+            if profile:
+                activity_names = {
+                    'sedentary': 'Sedentary',
+                    'light': 'Light',
+                    'medium': 'Moderate',
+                    'active': 'Active',
+                    'very_active': 'Very Active'
+                }
+
+                goal_names = {
+                    'weight_loss': 'Weight Loss',
+                    'maintenance': 'Maintenance',
+                    'weight_gain': 'Weight Gain'
+                }
+
+                await update.message.reply_html(
+                    f"👤 <b>Your Profile</b>\n\n"
+                    f"📏 Height: <b>{profile.get('height', 'Not set')} cm</b>\n"
+                    f"⚖️ Weight: <b>{profile.get('weight', 'Not set')} kg</b>\n"
+                    f"🎂 Age: <b>{profile.get('age', 'Not set')}</b>\n"
+                    f"⚧️ Gender: <b>{profile.get('gender', 'Not set').title()}</b>\n"
+                    f"🏃 Activity: <b>{activity_names.get(profile.get('activity_level'), 'Not set')}</b>\n"
+                    f"🎯 Goal: <b>{goal_names.get(profile.get('goal'), 'Not set')}</b>\n\n"
+                    f"📊 <b>Daily Target:</b>\n"
+                    f"🔥 Calories: <b>{profile.get('daily_calories', 0):.0f} kcal</b>"
+                )
+            else:
+                await update.message.reply_text(
+                    "Profile not found. Please complete registration using /start"
+                )
+
+        async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+            await update.message.reply_html(
+                "<b>📱 Available Commands:</b>\n\n"
+                "/start - Start/Restart bot\n"
+                "/add_meal - Add meal\n"
+                "/add_drink - Add drink\n"
+                "/today - Today's summary\n"
+                "/profile - View profile\n"
+                "/help - This help message\n\n"
+                "<b>💡 How it works:</b>\n\n"
+                "1. Complete your profile\n"
+                "2. Add meals by photo or manually\n"
+                "3. Track your daily nutrition\n"
+                "4. Achieve your goals!"
+            )
+
 
 def main():
     """Main function to run the bot"""
