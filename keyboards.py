@@ -1,4 +1,17 @@
-from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove
+
+__all__ = [
+    'get_user_type_keyboard',
+    'get_confirm_keyboard',
+    'get_meal_type_keyboard',
+    'get_yes_no_keyboard',
+    'get_drink_method_keyboard',
+    'get_drink_categories_keyboard',
+    'get_popular_drinks_keyboard',
+    'get_drink_volumes_keyboard',
+    'get_reference_object_keyboard',
+    'remove_keyboard'
+]
 
 def get_user_type_keyboard():
     keyboard = [

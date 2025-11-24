@@ -240,5 +240,27 @@ class Database:
             logger.error(f"Error getting trainees: {e}")
             return []
 
+    def connect(self):
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            self.conn = psycopg2.connect(
+                Config.DATABASE_URL, 
+                sslmode='require',
+                connect_timeout=10
+            )
+            logger.info("Database connection established")
+            return
+        except Exception as e:
+            retry_count += 1
+            logger.error(f"Database connection attempt {retry_count} failed: {e}")
+            if retry_count >= max_retries:
+                logger.error("Max database connection retries reached")
+                raise
+            import time
+            time.sleep(2)
+
 # Global database instance
 db = Database()
