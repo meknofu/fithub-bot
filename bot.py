@@ -815,20 +815,24 @@ class FithubBot:
             )
 
     async def restart_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /restart command - reset profile and clear data"""
+        """Handle /restart command - completely reset profile and clear all data"""
         user_id = update.effective_user.id
 
         try:
-            logger.info(f"User {user_id} requested restart")
+            logger.info(f"User {user_id} requested full restart")
 
-            # Try to clear database data (non-critical - won't crash if it fails)
+            # Clear all data from database
             try:
                 with self.db.conn.cursor() as cur:
-                    # Clear meals and drinks
-                    cur.execute('DELETE FROM meals WHERE user_id = %s', (user_id,))
-                    cur.execute('DELETE FROM drinks WHERE user_id = %s', (user_id,))
+                    # Delete all meals
+                    deleted_meals = cur.execute('DELETE FROM meals WHERE user_id = %s', (user_id,))
+                    logger.info(f"Deleted meals for user {user_id}")
 
-                    # Reset profile fields but keep user record
+                    # Delete all drinks
+                    deleted_drinks = cur.execute('DELETE FROM drinks WHERE user_id = %s', (user_id,))
+                    logger.info(f"Deleted drinks for user {user_id}")
+
+                    # Reset profile fields to NULL (keeps user record but clears profile)
                     cur.execute('''
                         UPDATE users 
                         SET height = NULL, 
@@ -842,20 +846,27 @@ class FithubBot:
                     ''', (user_id,))
 
                     self.db.conn.commit()
-                    logger.info(f"Database data cleared for user {user_id}")
-            except Exception as db_error:
-                logger.warning(f"Database clear failed (non-critical): {db_error}")
-                # Don't crash - just continue
+                    logger.info(f"All data cleared for user {user_id}")
 
-            # Clear user state
+            except Exception as db_error:
+                logger.error(f"Database clear error: {db_error}", exc_info=True)
+                self.db.conn.rollback()
+                await update.message.reply_text(
+                    "Error clearing data from database. Please contact support.",
+                    reply_markup=self.remove_keyboard()
+                )
+                return
+
+            # Clear user state in memory
             self.user_manager.set_user_state(user_id, 'awaiting_user_type')
 
-            # Show welcome message
+            # Show success message
             user = update.effective_user
             await update.message.reply_html(
-                f"<b>Profile reset complete!</b>\n\n"
-                f"Hi, {user.first_name}! Your meal history has been cleared.\n\n"
-                f"Let's set up your profile again.\n\n"
+                f"<b>Complete restart successful!</b>\n\n"
+                f"Hi, {user.first_name}!\n\n"
+                f"Your profile, meal history, and drink history have been completely cleared.\n\n"
+                f"Let's start fresh!\n\n"
                 f"Who are you?",
                 reply_markup=self.get_user_type_keyboard()
             )
@@ -863,9 +874,9 @@ class FithubBot:
             logger.info(f"User {user_id} restarted successfully")
 
         except Exception as e:
-            logger.error(f"Error in restart command: {e}", exc_info=True)
+            logger.error(f"Critical error in restart command: {e}", exc_info=True)
             await update.message.reply_text(
-                "Error restarting. Please use /start instead.",
+                "An error occurred during restart. Please use /start to continue.",
                 reply_markup=self.remove_keyboard()
             )
 
