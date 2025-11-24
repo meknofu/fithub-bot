@@ -823,14 +823,21 @@ class FithubBot:
 
             # Clear all data from database
             try:
+                # Ensure connection is alive
+                if self.db.conn.closed:
+                    logger.warning("Database connection was closed, reconnecting...")
+                    self.db.connect()
+
                 with self.db.conn.cursor() as cur:
                     # Delete all meals
-                    deleted_meals = cur.execute('DELETE FROM meals WHERE user_id = %s', (user_id,))
-                    logger.info(f"Deleted meals for user {user_id}")
+                    cur.execute('DELETE FROM meals WHERE user_id = %s', (user_id,))
+                    meals_deleted = cur.rowcount
+                    logger.info(f"Deleted {meals_deleted} meals for user {user_id}")
 
                     # Delete all drinks
-                    deleted_drinks = cur.execute('DELETE FROM drinks WHERE user_id = %s', (user_id,))
-                    logger.info(f"Deleted drinks for user {user_id}")
+                    cur.execute('DELETE FROM drinks WHERE user_id = %s', (user_id,))
+                    drinks_deleted = cur.rowcount
+                    logger.info(f"Deleted {drinks_deleted} drinks for user {user_id}")
 
                     # Reset profile fields to NULL (keeps user record but clears profile)
                     cur.execute('''
@@ -844,15 +851,25 @@ class FithubBot:
                             daily_calories = NULL
                         WHERE id = %s
                     ''', (user_id,))
+                    profile_updated = cur.rowcount
+                    logger.info(f"Reset profile for user {user_id} (rows affected: {profile_updated})")
 
-                    self.db.conn.commit()
-                    logger.info(f"All data cleared for user {user_id}")
+                # Commit outside the cursor context
+                self.db.conn.commit()
+                logger.info(f"All data cleared and committed for user {user_id}")
 
             except Exception as db_error:
                 logger.error(f"Database clear error: {db_error}", exc_info=True)
-                self.db.conn.rollback()
+                # Rollback on error
+                try:
+                    self.db.conn.rollback()
+                except:
+                    pass
+
+                # Show generic error to user
                 await update.message.reply_text(
-                    "Error clearing data from database. Please contact support.",
+                    f"Error clearing data: {str(db_error)}\n\n"
+                    f"Please try again or contact support if the problem persists.",
                     reply_markup=self.remove_keyboard()
                 )
                 return
@@ -876,7 +893,8 @@ class FithubBot:
         except Exception as e:
             logger.error(f"Critical error in restart command: {e}", exc_info=True)
             await update.message.reply_text(
-                "An error occurred during restart. Please use /start to continue.",
+                f"An error occurred: {str(e)}\n\n"
+                f"Please use /start to continue.",
                 reply_markup=self.remove_keyboard()
             )
 
