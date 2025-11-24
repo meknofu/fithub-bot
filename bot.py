@@ -11,18 +11,12 @@ from keyboards import (
     get_user_type_keyboard,
     get_confirm_keyboard,
     get_meal_type_keyboard,
-    get_yes_no_keyboard,
-    get_drink_method_keyboard,
-    get_drink_categories_keyboard,
-    get_popular_drinks_keyboard,
     get_drink_volumes_keyboard,
-    get_reference_object_keyboard,
     remove_keyboard
 )
 import re
 from datetime import datetime
 
-# Logging configuration
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -55,12 +49,26 @@ class FithubBot:
         """Handle /start command"""
         try:
             user = update.effective_user
-            user_data = {
-                'id': user.id,
-                'username': user.username,
-                'first_name': user.first_name,
-                'last_name': user.last_name
-            }
+            logger.info(f"User {user.id} started bot")
+            
+            # Check if user already has a profile
+            existing_profile = self.db.get_user_profile(user.id)
+            
+            if existing_profile and existing_profile.get('height'):
+                # User has completed profile
+                await update.message.reply_html(
+                    f"👋 Welcome back, {user.first_name}!\n\n"
+                    f"Your profile is already set up.\n\n"
+                    f"<b>Commands:</b>\n"
+                    f"/add_meal - Add meal\n"
+                    f"/add_drink - Add drink\n"
+                    f"/today - Today's summary\n"
+                    f"/profile - View profile\n"
+                    f"/help - Help\n\n"
+                    f"Want to start over? Type /restart",
+                    reply_markup=remove_keyboard()
+                )
+                return
             
             await update.message.reply_html(
                 f"👋 Welcome to FITHUB!\n\n"
@@ -76,7 +84,7 @@ class FithubBot:
             
             self.user_manager.set_user_state(user.id, 'awaiting_user_type')
         except Exception as e:
-            logger.error(f"Error in start command: {e}")
+            logger.error(f"Error in start command: {e}", exc_info=True)
             await update.message.reply_text("Sorry, an error occurred. Please try again.")
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -84,53 +92,41 @@ class FithubBot:
         try:
             user_id = update.effective_user.id
             text = update.message.text
+            
+            # Ignore messages that are commands
+            if text.strip().startswith('/'):
+                return
+            
             state = self.user_manager.get_user_state(user_id)
             
             logger.info(f"User {user_id} in state {state} sent: {text}")
             
-            # User type selection
             if state == 'awaiting_user_type':
                 await self.handle_user_type_selection(update, text)
-            
-            # Profile setup states
             elif state == 'awaiting_height':
                 await self.handle_height_input(update, text)
-            
             elif state == 'awaiting_weight':
                 await self.handle_weight_input(update, text)
-            
             elif state == 'awaiting_age':
                 await self.handle_age_input(update, text)
-            
             elif state == 'awaiting_gender':
                 await self.handle_gender_selection(update, text)
-            
             elif state == 'awaiting_activity_level':
                 await self.handle_activity_level_selection(update, text)
-            
             elif state == 'awaiting_goal':
                 await self.handle_goal_selection(update, text)
-            
-            # Meal tracking states
             elif state == 'awaiting_meal_type':
                 await self.handle_meal_type_selection(update, text)
-            
             elif state == 'awaiting_confirmation':
                 await self.handle_confirmation(update, text)
-            
-            elif state == 'awaiting_manual_input':
+            elif state == 'awaiting_manual_input' or state == 'awaiting_food_photo':
                 await self.handle_manual_food_input(update, text)
-            
-            # Drink tracking states
             elif state == 'awaiting_drink_name':
                 await self.handle_drink_name_input(update, text)
-            
             elif state == 'awaiting_drink_volume':
                 await self.handle_drink_volume_selection(update, text)
-            
             elif state == 'awaiting_custom_volume':
                 await self.handle_custom_volume_input(update, text)
-            
             else:
                 await update.message.reply_text(
                     "I didn't understand that. Use /help to see available commands."
@@ -143,7 +139,7 @@ class FithubBot:
             )
     
     async def handle_user_type_selection(self, update: Update, text: str):
-        """Handle user type selection (Trainer/Trainee)"""
+        """Handle user type selection"""
         user_id = update.effective_user.id
         
         if 'Trainer' in text:
@@ -311,7 +307,7 @@ class FithubBot:
                 goal=goal
             )
             
-            # Save profile
+            # Save profile to database
             profile_data = {
                 'height': data['height'],
                 'weight': data['weight'],
@@ -321,7 +317,9 @@ class FithubBot:
                 'goal': goal,
                 'daily_calories': cpfc['calories']
             }
-            self.db.update_user_profile(user_id, profile_data)
+            
+            success = self.db.update_user_profile(user_id, profile_data)
+            logger.info(f"Profile update for user {user_id}: {success}")
             
             await update.message.reply_html(
                 f"✅ <b>Profile completed!</b>\n\n"
@@ -369,7 +367,7 @@ class FithubBot:
     async def handle_confirmation(self, update: Update, text: str):
         """Handle meal confirmation"""
         user_id = update.effective_user.id
-        if '✅' in text or 'Yes' in text:
+        if '✅' in text or 'Yes' in text or 'correct' in text.lower():
             data = self.user_manager.get_user_data(user_id)
             
             # Save meal
@@ -384,6 +382,7 @@ class FithubBot:
             }
             
             meal_id = self.db.save_meal(meal_data)
+            logger.info(f"Meal saved for user {user_id}: meal_id={meal_id}")
             
             if meal_id:
                 # Get remaining CPFC for the day
@@ -438,7 +437,6 @@ class FithubBot:
         
         for line in lines:
             try:
-                # Format: food name - weight
                 parts = line.split('-')
                 if len(parts) == 2:
                     food_name = parts[0].strip()
@@ -463,7 +461,6 @@ class FithubBot:
         if not meal_cpfc:
             meal_cpfc = {'calories': 0, 'protein': 0, 'fat': 0, 'carbs': 0}
         
-        # Display for confirmation
         items_text = "\n".join([f"• {item['name']}: {item['weight']}g" for item in food_items])
         
         data['food_items'] = food_items
@@ -491,19 +488,16 @@ class FithubBot:
         user_id = update.effective_user.id
         drink_name = text.strip()
         
-        # Search in database
-        drink_info = self.drink_manager.get_drink_nutrition(drink_name, 250)  # Default 250ml
+        drink_info = self.drink_manager.get_drink_nutrition(drink_name, 250)
         
         if drink_info:
             data = {'drink_name': drink_name, 'drink_info': drink_info}
             self.user_manager.set_user_state(user_id, 'awaiting_drink_volume', data)
             await update.message.reply_text(
-                f"✅ Found: {drink_name}\n\n"
-                f"Select volume:",
+                f"✅ Found: {drink_name}\n\nSelect volume:",
                 reply_markup=get_drink_volumes_keyboard()
             )
         else:
-            # Search for similar drinks
             similar = self.drink_manager.search_drinks(drink_name)
             
             if similar:
@@ -527,7 +521,6 @@ class FithubBot:
         volume_ml = None
         
         if 'ml' in text or 'glass' in text or 'can' in text or 'bottle' in text or 'liter' in text:
-            # Extract number
             numbers = re.findall(r'\d+', text)
             if numbers:
                 volume_ml = int(numbers[0])
@@ -543,13 +536,11 @@ class FithubBot:
             data = self.user_manager.get_user_data(user_id)
             drink_name = data.get('drink_name', 'Unknown')
             
-            # Recalculate with actual volume
             drink_info = self.drink_manager.get_drink_nutrition(drink_name, volume_ml)
             
             if not drink_info:
-                drink_info = {'calories': 0, 'protein': 0, 'fat': 0, 'carbs': 0}
+                drink_info = {'calories': 0, 'protein': 0, 'fat': 0, 'carbs': 0, 'drink_name': drink_name, 'volume_ml': volume_ml}
             
-            # Save drink
             drink_data = {
                 'user_id': user_id,
                 'drink_name': drink_name,
@@ -560,6 +551,8 @@ class FithubBot:
                 'carbs': drink_info['carbs'],
                 'date': datetime.now().strftime('%Y-%m-%d')
             }
+            
+            logger.info(f"Saving drink for user {user_id}: {drink_data}")
             
             if self.db.save_drink(drink_data):
                 await update.message.reply_html(
@@ -599,7 +592,7 @@ class FithubBot:
             drink_info = self.drink_manager.get_drink_nutrition(drink_name, volume_ml)
             
             if not drink_info:
-                drink_info = {'calories': 0, 'protein': 0, 'fat': 0, 'carbs': 0}
+                drink_info = {'calories': 0, 'protein': 0, 'fat': 0, 'carbs': 0, 'drink_name': drink_name, 'volume_ml': volume_ml}
             
             drink_data = {
                 'user_id': user_id,
@@ -628,57 +621,49 @@ class FithubBot:
                 await update.message.reply_text("❌ Error saving drink.")
         except ValueError:
             await update.message.reply_text("Please enter a valid number:")
-
+    
     async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle photo messages with improved food recognition"""
+        """Handle photo messages"""
         user_id = update.effective_user.id
         state = self.user_manager.get_user_state(user_id)
-
+        
         if state == 'awaiting_food_photo':
             await update.message.reply_text("🔍 Analyzing photo...")
-
+            
             try:
-                # Get the largest photo
                 photo = update.message.photo[-1]
                 photo_file = await photo.get_file()
                 photo_bytes = await photo_file.download_as_bytearray()
-
-                # Recognize food
+                
                 result = self.vision.detect_food_items(bytes(photo_bytes))
-
+                
                 if result['success'] and result['items']:
-                    # Format recognized items with estimated weights
                     items_list = []
-                    for item in result['items'][:10]:  # Max 10 items
+                    for item in result['items'][:10]:
                         name = item['name']
                         confidence = item['confidence'] * 100
                         weight = item.get('estimated_weight', 100)
-                        items_list.append(f"{name} - {weight}g (confidence: {confidence:.0f}%)")
-
+                        items_list.append(f"{name} - {weight}g")
+                    
                     items_text = "\n".join(items_list)
-
+                    
                     data = self.user_manager.get_user_data(user_id)
                     data['recognized_items'] = result['items'][:10]
-
+                    
                     await update.message.reply_html(
                         f"✅ <b>Recognized with estimated weights:</b>\n\n"
                         f"{items_text}\n\n"
-                        f"📝 <b>You can now:</b>\n"
-                        f"1️⃣ Accept these weights and items by typing:\n"
-                        f"   <code>/confirm</code>\n\n"
-                        f"2️⃣ Or adjust the weights manually:\n\n"
+                        f"📝 <b>Please adjust the weights if needed:</b>\n\n"
                         f"<b>Format:</b> food name - weight in grams\n\n"
                         f"<b>Example:</b>\n"
                         f"<code>Egg - 50\n"
                         f"Carrot - 60\n"
                         f"Orange - 130</code>",
-                        reply_markup=get_confirm_keyboard()
+                        reply_markup=remove_keyboard()
                     )
-
-                    # Auto-generate meal data for quick confirm
-                    data['auto_generated_meal'] = self._convert_recognized_to_meal(result['items'][:10])
+                    
                     self.user_manager.set_user_state(user_id, 'awaiting_manual_input', data)
-
+                    
                 else:
                     await update.message.reply_text(
                         "❌ Could not recognize food in the photo.\n\n"
@@ -690,7 +675,7 @@ class FithubBot:
                         reply_markup=remove_keyboard()
                     )
                     self.user_manager.set_user_state(user_id, 'awaiting_manual_input')
-
+                    
             except Exception as e:
                 logger.error(f"Error processing photo: {e}", exc_info=True)
                 await update.message.reply_text(
@@ -700,17 +685,7 @@ class FithubBot:
                 self.user_manager.set_user_state(user_id, 'awaiting_manual_input')
         else:
             await update.message.reply_text("Please use /add_meal to start adding a meal.")
-
-    def _convert_recognized_to_meal(self, recognized_items):
-        """Convert recognized items to meal format"""
-        food_items = []
-        for item in recognized_items:
-            food_items.append({
-                'name': item['name'],
-                'weight': item.get('estimated_weight', 100)
-            })
-        return food_items
-
+    
     # Command methods
     async def add_meal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /add_meal command"""
@@ -737,6 +712,14 @@ class FithubBot:
         user_id = update.effective_user.id
         
         try:
+            # Check if user has profile
+            profile = self.db.get_user_profile(user_id)
+            if not profile or not profile.get('daily_calories'):
+                await update.message.reply_text(
+                    "Please complete your profile first using /start"
+                )
+                return
+            
             remaining = self.calculator.get_remaining_cpfc(
                 user_id,
                 datetime.now().strftime('%Y-%m-%d')
@@ -763,10 +746,10 @@ class FithubBot:
                 )
             else:
                 await update.message.reply_text(
-                    "Please complete your profile first using /start"
+                    "No data for today yet. Start tracking with /add_meal or /add_drink"
                 )
         except Exception as e:
-            logger.error(f"Error in today_command: {e}")
+            logger.error(f"Error in today_command: {e}", exc_info=True)
             await update.message.reply_text("Error getting today's summary. Please try again.")
     
     async def profile_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -774,7 +757,9 @@ class FithubBot:
         user_id = update.effective_user.id
         profile = self.db.get_user_profile(user_id)
         
-        if profile:
+        logger.info(f"Profile fetched for user {user_id}: {profile}")
+        
+        if profile and profile.get('height'):
             activity_names = {
                 'sedentary': 'Sedentary',
                 'light': 'Light',
@@ -794,7 +779,7 @@ class FithubBot:
                 f"📏 Height: <b>{profile.get('height', 'Not set')} cm</b>\n"
                 f"⚖️ Weight: <b>{profile.get('weight', 'Not set')} kg</b>\n"
                 f"🎂 Age: <b>{profile.get('age', 'Not set')}</b>\n"
-                f"⚧️ Gender: <b>{profile.get('gender', 'Not set').title()}</b>\n"
+                f"⚧️ Gender: <b>{profile.get('gender', 'not set').title()}</b>\n"
                 f"🏃 Activity: <b>{activity_names.get(profile.get('activity_level'), 'Not set')}</b>\n"
                 f"🎯 Goal: <b>{goal_names.get(profile.get('goal'), 'Not set')}</b>\n\n"
                 f"📊 <b>Daily Target:</b>\n"
@@ -822,46 +807,6 @@ class FithubBot:
             "4. Achieve your goals!"
         )
 
-    async def confirm_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Confirm auto-detected meal"""
-        user_id = update.effective_user.id
-        data = self.user_manager.get_user_data(user_id)
-
-        if 'auto_generated_meal' in data:
-            food_items = data['auto_generated_meal']
-
-            # Calculate CPFC
-            meal_cpfc = self.calculator.calculate_meal_cpfc(food_items)
-
-            if not meal_cpfc:
-                meal_cpfc = {'calories': 0, 'protein': 0, 'fat': 0, 'carbs': 0}
-
-            # Save data for confirmation
-            data['food_items'] = food_items
-            data['total_calories'] = meal_cpfc['calories']
-            data['total_protein'] = meal_cpfc['protein']
-            data['total_fat'] = meal_cpfc['fat']
-            data['total_carbs'] = meal_cpfc['carbs']
-
-            self.user_manager.set_user_state(user_id, 'awaiting_confirmation', data)
-
-            items_text = "\n".join([f"• {item['name']}: {item['weight']}g" for item in food_items])
-
-            await update.message.reply_html(
-                f"📝 <b>Your meal:</b>\n\n"
-                f"{items_text}\n\n"
-                f"📊 <b>Nutrition:</b>\n"
-                f"🔥 Calories: <b>{meal_cpfc['calories']:.0f} kcal</b>\n"
-                f"🥩 Protein: <b>{meal_cpfc['protein']:.0f} g</b>\n"
-                f"🥑 Fat: <b>{meal_cpfc['fat']:.0f} g</b>\n"
-                f"🍞 Carbs: <b>{meal_cpfc['carbs']:.0f} g</b>\n\n"
-                f"Is this correct?",
-                reply_markup=get_confirm_keyboard()
-            )
-        else:
-            await update.message.reply_text("No auto-detected meal found. Please send a photo first.")
-
-
 def main():
     """Main function to run the bot"""
     try:
@@ -869,33 +814,28 @@ def main():
         bot = FithubBot()
         logger.info("Bot instance created successfully")
         
-        # Verify config
         if not Config.BOT_TOKEN:
-            raise ValueError("BOT_TOKEN is not set in environment variables")
+            raise ValueError("BOT_TOKEN is not set")
         
         if not Config.DATABASE_URL:
-            raise ValueError("DATABASE_URL is not set in environment variables")
+            raise ValueError("DATABASE_URL is not set")
         
-        # Create application
         application = Application.builder().token(Config.BOT_TOKEN).build()
         logger.info("Application builder configured")
         
-        # Register command handlers
+        # IMPORTANT: Register command handlers BEFORE message handlers
         application.add_handler(CommandHandler("start", bot.start))
         application.add_handler(CommandHandler("add_meal", bot.add_meal_command))
         application.add_handler(CommandHandler("add_drink", bot.add_drink_command))
         application.add_handler(CommandHandler("today", bot.today_command))
         application.add_handler(CommandHandler("profile", bot.profile_command))
         application.add_handler(CommandHandler("help", bot.help_command))
-        application.add_handler(CommandHandler("confirm", bot.confirm_command))
-
-        # Register message handlers
+        
+        # Message handlers (AFTER command handlers)
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
         application.add_handler(MessageHandler(filters.PHOTO, bot.handle_photo))
-
-        logger.info("All handlers registered")
         
-        # Start bot
+        logger.info("All handlers registered")
         logger.info("Bot starting polling...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
         
