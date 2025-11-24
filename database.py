@@ -3,6 +3,7 @@ from psycopg2.extras import RealDictCursor
 import os
 from config import Config
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -13,11 +14,26 @@ class Database:
         self.init_tables()
     
     def connect(self):
-        try:
-            self.conn = psycopg2.connect(Config.DATABASE_URL, sslmode='require')
-            logger.info("Database connection established")
-        except Exception as e:
-            logger.error(f"Database connection error: {e}")
+        """Connect to database with retry logic"""
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                self.conn = psycopg2.connect(
+                    Config.DATABASE_URL, 
+                    sslmode='require',
+                    connect_timeout=10
+                )
+                logger.info("Database connection established")
+                return
+            except Exception as e:
+                retry_count += 1
+                logger.error(f"Database connection attempt {retry_count} failed: {e}")
+                if retry_count >= max_retries:
+                    logger.error("Max database connection retries reached")
+                    raise
+                time.sleep(2)
     
     def init_tables(self):
         try:
@@ -239,28 +255,6 @@ class Database:
         except Exception as e:
             logger.error(f"Error getting trainees: {e}")
             return []
-
-    def connect(self):
-    max_retries = 3
-    retry_count = 0
-    
-    while retry_count < max_retries:
-        try:
-            self.conn = psycopg2.connect(
-                Config.DATABASE_URL, 
-                sslmode='require',
-                connect_timeout=10
-            )
-            logger.info("Database connection established")
-            return
-        except Exception as e:
-            retry_count += 1
-            logger.error(f"Database connection attempt {retry_count} failed: {e}")
-            if retry_count >= max_retries:
-                logger.error("Max database connection retries reached")
-                raise
-            import time
-            time.sleep(2)
 
 # Global database instance
 db = Database()
