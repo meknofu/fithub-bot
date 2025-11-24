@@ -11,18 +11,18 @@ class Database:
         self.conn = None
         self.connect()
         self.init_tables()
-
+    
     def connect(self):
         try:
             self.conn = psycopg2.connect(Config.DATABASE_URL, sslmode='require')
             logger.info("Database connection established")
         except Exception as e:
             logger.error(f"Database connection error: {e}")
-
+    
     def init_tables(self):
         try:
             with self.conn.cursor() as cur:
-                # Таблица пользователей
+                # Users table
                 cur.execute('''
                     CREATE TABLE IF NOT EXISTS users (
                         id BIGINT PRIMARY KEY,
@@ -32,13 +32,17 @@ class Database:
                         user_type VARCHAR(50),
                         height FLOAT,
                         weight FLOAT,
+                        age INTEGER,
+                        gender VARCHAR(10),
+                        activity_level VARCHAR(50),
+                        goal VARCHAR(50),
                         daily_calories FLOAT,
                         trainer_id BIGINT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
                 
-                # Таблица связей тренер-ученик
+                # Trainer-trainee relationship table
                 cur.execute('''
                     CREATE TABLE IF NOT EXISTS trainer_trainee (
                         trainer_id BIGINT,
@@ -47,98 +51,168 @@ class Database:
                     )
                 ''')
                 
-                # Таблица приемов пищи
-                cur.execute('''
-                    CREATE TABLE IF NOT EXISTS meals (
-                        id SERIAL PRIMARY KEY,
-                        user_id BIGINT,
-                        food_name VARCHAR(255),
-                        weight_grams FLOAT,
-                        calories FLOAT,
-                        protein FLOAT,
-                        fat FLOAT,
-                        carbs FLOAT,
-                        meal_type VARCHAR(50),
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
-                
-                # Таблица продуктов (из USDA)
+                # Food items table
                 cur.execute('''
                     CREATE TABLE IF NOT EXISTS food_items (
                         id SERIAL PRIMARY KEY,
                         name VARCHAR(255) UNIQUE,
-                        calories_per_100g FLOAT,
-                        protein_per_100g FLOAT,
-                        fat_per_100g FLOAT,
-                        carbs_per_100g FLOAT
+                        calories FLOAT,
+                        protein FLOAT,
+                        fat FLOAT,
+                        carbs FLOAT,
+                        per_grams INTEGER DEFAULT 100
+                    )
+                ''')
+                
+                # Meals table
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS meals (
+                        id SERIAL PRIMARY KEY,
+                        user_id BIGINT,
+                        meal_type VARCHAR(50),
+                        date DATE,
+                        total_calories FLOAT,
+                        total_protein FLOAT,
+                        total_fat FLOAT,
+                        total_carbs FLOAT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # Meal items table (food items in each meal)
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS meal_items (
+                        id SERIAL PRIMARY KEY,
+                        meal_id INTEGER REFERENCES meals(id),
+                        food_item_id INTEGER REFERENCES food_items(id),
+                        weight_grams FLOAT,
+                        calories FLOAT,
+                        protein FLOAT,
+                        fat FLOAT,
+                        carbs FLOAT
+                    )
+                ''')
+                
+                # Drinks table
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS drinks (
+                        id SERIAL PRIMARY KEY,
+                        user_id BIGINT,
+                        drink_name VARCHAR(255),
+                        volume_ml FLOAT,
+                        calories FLOAT,
+                        protein FLOAT,
+                        fat FLOAT,
+                        carbs FLOAT,
+                        date DATE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
                 
                 self.conn.commit()
-                logger.info("Tables initialized successfully")
+                logger.info("Database tables initialized")
         except Exception as e:
             logger.error(f"Table initialization error: {e}")
-            self.conn.rollback()
-
-    def add_user(self, user_data):
+    
+    def save_user(self, user_data):
+        """Save or update user"""
         try:
             with self.conn.cursor() as cur:
                 cur.execute('''
                     INSERT INTO users (id, username, first_name, last_name, user_type)
-                    VALUES (%s, %s, %s, %s, %s)
+                    VALUES (%(id)s, %(username)s, %(first_name)s, %(last_name)s, %(user_type)s)
                     ON CONFLICT (id) DO UPDATE SET
-                    username = EXCLUDED.username,
-                    first_name = EXCLUDED.first_name,
-                    last_name = EXCLUDED.last_name,
-                    user_type = EXCLUDED.user_type
-                ''', (user_data['id'], user_data.get('username'), 
-                      user_data['first_name'], user_data.get('last_name'), 
-                      user_data['user_type']))
+                        username = %(username)s,
+                        first_name = %(first_name)s,
+                        last_name = %(last_name)s,
+                        user_type = %(user_type)s
+                ''', user_data)
                 self.conn.commit()
+                return True
         except Exception as e:
-            logger.error(f"Error adding user: {e}")
-            self.conn.rollback()
-
-    def update_user_metrics(self, user_id, height, weight, daily_calories):
+            logger.error(f"Error saving user: {e}")
+            return False
+    
+    def update_user_profile(self, user_id, profile_data):
+        """Update user profile"""
+        try:
+            with self.conn.cursor() as cur:
+                fields = ', '.join([f"{key} = %({key})s" for key in profile_data.keys()])
+                query = f"UPDATE users SET {fields} WHERE id = %(user_id)s"
+                profile_data['user_id'] = user_id
+                cur.execute(query, profile_data)
+                self.conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error updating profile: {e}")
+            return False
+    
+    def get_user_profile(self, user_id):
+        """Get user profile"""
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute('SELECT * FROM users WHERE id = %s', (user_id,))
+                return cur.fetchone()
+        except Exception as e:
+            logger.error(f"Error getting profile: {e}")
+            return None
+    
+    def save_meal(self, meal_data):
+        """Save meal"""
         try:
             with self.conn.cursor() as cur:
                 cur.execute('''
-                    UPDATE users 
-                    SET height = %s, weight = %s, daily_calories = %s
-                    WHERE id = %s
-                ''', (height, weight, daily_calories, user_id))
+                    INSERT INTO meals (user_id, meal_type, date, total_calories, total_protein, total_fat, total_carbs)
+                    VALUES (%(user_id)s, %(meal_type)s, %(date)s, %(calories)s, %(protein)s, %(fat)s, %(carbs)s)
+                    RETURNING id
+                ''', meal_data)
+                meal_id = cur.fetchone()[0]
                 self.conn.commit()
+                return meal_id
         except Exception as e:
-            logger.error(f"Error updating user metrics: {e}")
-            self.conn.rollback()
-
-    def add_meal(self, user_id, food_name, weight_grams, calories, protein, fat, carbs, meal_type):
-        try:
-            with self.conn.cursor() as cur:
-                cur.execute('''
-                    INSERT INTO meals (user_id, food_name, weight_grams, calories, protein, fat, carbs, meal_type)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ''', (user_id, food_name, weight_grams, calories, protein, fat, carbs, meal_type))
-                self.conn.commit()
-        except Exception as e:
-            logger.error(f"Error adding meal: {e}")
-            self.conn.rollback()
-
+            logger.error(f"Error saving meal: {e}")
+            return None
+    
     def get_daily_intake(self, user_id, date):
+        """Get all meals for a specific day"""
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute('''
                     SELECT * FROM meals 
-                    WHERE user_id = %s AND DATE(created_at) = %s
+                    WHERE user_id = %s AND date = %s
                     ORDER BY created_at
                 ''', (user_id, date))
                 return cur.fetchall()
         except Exception as e:
             logger.error(f"Error getting daily intake: {e}")
             return []
-
-    def add_trainer_trainee(self, trainer_id, trainee_id):
+    
+    def get_food_nutrition(self, food_name):
+        """Get nutrition data for a food item"""
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute('SELECT * FROM food_items WHERE LOWER(name) = LOWER(%s)', (food_name,))
+                return cur.fetchone()
+        except Exception as e:
+            logger.error(f"Error getting food nutrition: {e}")
+            return None
+    
+    def save_drink(self, drink_data):
+        """Save drink entry"""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute('''
+                    INSERT INTO drinks (user_id, drink_name, volume_ml, calories, protein, fat, carbs, date)
+                    VALUES (%(user_id)s, %(drink_name)s, %(volume_ml)s, %(calories)s, %(protein)s, %(fat)s, %(carbs)s, %(date)s)
+                ''', drink_data)
+                self.conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error saving drink: {e}")
+            return False
+    
+    def link_trainer_trainee(self, trainer_id, trainee_id):
+        """Link trainer with trainee"""
         try:
             with self.conn.cursor() as cur:
                 cur.execute('''
@@ -146,17 +220,14 @@ class Database:
                     VALUES (%s, %s)
                     ON CONFLICT DO NOTHING
                 ''', (trainer_id, trainee_id))
-                
-                cur.execute('''
-                    UPDATE users SET trainer_id = %s WHERE id = %s
-                ''', (trainer_id, trainee_id))
-                
                 self.conn.commit()
+                return True
         except Exception as e:
-            logger.error(f"Error adding trainer-trainee relationship: {e}")
-            self.conn.rollback()
-
+            logger.error(f"Error linking trainer-trainee: {e}")
+            return False
+    
     def get_trainees(self, trainer_id):
+        """Get all trainees for a trainer"""
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute('''
@@ -169,47 +240,5 @@ class Database:
             logger.error(f"Error getting trainees: {e}")
             return []
 
-    def search_food(self, food_name):
-        try:
-            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute('''
-                    SELECT * FROM food_items 
-                    WHERE name ILIKE %s
-                    LIMIT 10
-                ''', (f'%{food_name}%',))
-                return cur.fetchall()
-        except Exception as e:
-            logger.error(f"Error searching food: {e}")
-            return []
-
-    def get_user(self, user_id):
-        """Получает данные пользователя"""
-        try:
-            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute('SELECT * FROM users WHERE id = %s', (user_id,))
-                return cur.fetchone()
-        except Exception as e:
-            logger.error(f"Error getting user: {e}")
-            return None
-
-    def add_food_item(self, food_data):
-        try:
-            with self.conn.cursor() as cur:
-                cur.execute('''
-                    INSERT INTO food_items (name, calories_per_100g, protein_per_100g, fat_per_100g, carbs_per_100g)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (name) DO UPDATE SET
-                    calories_per_100g = EXCLUDED.calories_per_100g,
-                    protein_per_100g = EXCLUDED.protein_per_100g,
-                    fat_per_100g = EXCLUDED.fat_per_100g,
-                    carbs_per_100g = EXCLUDED.carbs_per_100g
-                ''', (food_data['name'], food_data['calories'], 
-                      food_data['protein'], food_data['fat'], 
-                      food_data['carbs']))
-                self.conn.commit()
-        except Exception as e:
-            logger.error(f"Error adding food item: {e}")
-            self.conn.rollback()
-
-# Глобальный экземпляр базы данных
+# Global database instance
 db = Database()

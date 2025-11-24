@@ -1,5 +1,5 @@
 from database import db
-from kbju_calculator import KBJUCalculator
+from cpfc_calculator import CPFCCalculator
 import logging
 from datetime import datetime
 
@@ -8,27 +8,28 @@ logger = logging.getLogger(__name__)
 class UserManager:
     def __init__(self):
         self.db = db
-        self.calculator = KBJUCalculator()
+        self.calculator = CPFCCalculator()
         self.user_states = {}
-
+    
     def set_user_state(self, user_id, state, data=None):
-        """Устанавливает состояние пользователя"""
+        """Sets user state"""
         if user_id not in self.user_states:
             self.user_states[user_id] = {}
+        
         self.user_states[user_id]['state'] = state
         if data:
             self.user_states[user_id]['data'] = data
-
+    
     def get_user_state(self, user_id):
-        """Получает состояние пользователя"""
+        """Gets user state"""
         return self.user_states.get(user_id, {}).get('state')
-
+    
     def get_user_data(self, user_id):
-        """Получает данные пользователя"""
+        """Gets user data"""
         return self.user_states.get(user_id, {}).get('data', {})
-
+    
     def get_daily_summary(self, user_id):
-        """Получает итог рациона за день"""
+        """Gets daily nutrition summary"""
         today = datetime.now().strftime('%Y-%m-%d')
         meals = self.db.get_daily_intake(user_id, today)
         

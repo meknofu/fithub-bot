@@ -8,16 +8,16 @@ class Config:
     DATABASE_URL = os.getenv('DATABASE_URL')
     GOOGLE_VISION_API_KEY = os.getenv('GOOGLE_VISION_API_KEY')
     
-    # Рекомендации по КБЖУ (калории на кг веса)
+    # CPFC recommendations (calories per kg of body weight)
     CALORIES_PER_KG = {
         'weight_loss': 30,
         'maintenance': 35,
         'weight_gain': 40
     }
     
-    # Соотношение БЖУ
+    # Macronutrient ratio
     MACRO_RATIO = {
-        'protein': 0.3,  # 30%
-        'fat': 0.25,     # 25%
-        'carbs': 0.45    # 45%
+        'protein': 0.3,   # 30%
+        'fat': 0.25,      # 25%
+        'carbs': 0.45     # 45%
     }

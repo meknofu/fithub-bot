@@ -2,63 +2,63 @@ from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMar
 
 def get_user_type_keyboard():
     keyboard = [
-        ['Я тренер', 'Я ученик']
+        ['I am a Trainer', 'I am a Trainee']
     ]
     return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
 
 def get_confirm_keyboard():
     keyboard = [
-        ['✅ Да, все верно', '❌ Нет, исправить вручную']
+        ['✅ Yes, all correct', '❌ No, correct manually']
     ]
     return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
 
 def get_meal_type_keyboard():
     keyboard = [
-        ['Завтрак', 'Обед'],
-        ['Перекус', 'Ужин']
+        ['Breakfast', 'Lunch'],
+        ['Snack', 'Dinner']
     ]
     return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
 
 def get_yes_no_keyboard():
     keyboard = [
-        ['✅ Да', '❌ Нет']
+        ['✅ Yes', '❌ No']
     ]
     return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
 
 def get_drink_method_keyboard():
     keyboard = [
-        ['Ввести название напитка']
+        ['Enter Drink Name']
     ]
     return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
 
 def get_drink_categories_keyboard():
     keyboard = [
-        ['Вода', 'Газировка', 'Кофе/Чай'],
-        ['Сок', 'Молочный напиток', 'Алкоголь'],
-        ['Энергетик', 'Спортивный напиток', 'Другое']
+        ['Water', 'Soda', 'Coffee/Tea'],
+        ['Juice', 'Dairy Drink', 'Alcohol'],
+        ['Energy Drink', 'Sports Drink', 'Other']
     ]
     return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
 
 def get_popular_drinks_keyboard():
     keyboard = [
-        ['Вода', 'Кола', 'Кофе'],
-        ['Апельсиновый сок', 'Молоко', 'Пиво'],
-        ['Red Bull', 'Изотоник', 'Другой напиток']
+        ['Water', 'Cola', 'Coffee'],
+        ['Orange Juice', 'Milk', 'Beer'],
+        ['Red Bull', 'Isotonic', 'Other Drink']
     ]
     return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
 
 def get_drink_volumes_keyboard():
     keyboard = [
-        ['250мл (стакан)', '330мл (банка)'],
-        ['500мл (бутылка)', '1000мл (литр)'],
-        ['Другой объем']
+        ['250ml (glass)', '330ml (can)'],
+        ['500ml (bottle)', '1000ml (liter)'],
+        ['Other Volume']
     ]
     return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
 
 def get_reference_object_keyboard():
     keyboard = [
-        ['Вилка', 'Ложка', 'Телефон'],
-        ['Карта', 'Ладонь', 'Без ориентира']
+        ['Fork', 'Spoon', 'Phone'],
+        ['Card', 'Palm', 'No Reference']
     ]
     return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
 
