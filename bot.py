@@ -123,13 +123,42 @@ class FithubBot:
                 await self.handle_user_type_selection(update, text)
             elif state == 'awaiting_height':
                 await self.handle_height_input(update, text)
-            # ... all your other states ...
+            elif state == 'awaiting_weight':
+                await self.handle_weight_input(update, text)
+            elif state == 'awaiting_age':
+                await self.handle_age_input(update, text)
+            elif state == 'awaiting_gender':
+                await self.handle_gender_selection(update, text)
+            elif state == 'awaiting_activity_level':
+                await self.handle_activity_level_selection(update, text)
+            elif state == 'awaiting_goal':
+                await self.handle_goal_selection(update, text)
+            elif state == 'awaiting_meal_type':
+                await self.handle_meal_type_selection(update, text)
+            elif state == 'awaiting_photo_confirmation':
+                await self.handle_photo_confirmation(update, text)
+            elif state == 'awaiting_manual_input':
+                await self.handle_manual_food_input(update, text)
+            elif state == 'awaiting_final_confirmation':
+                await self.handle_final_confirmation(update, text)
+            elif state == 'awaiting_drink_name':
+                await self.handle_drink_name_input(update, text)
+            elif state == 'awaiting_drink_volume':
+                await self.handle_drink_volume_selection(update, text)
+            elif state == 'awaiting_custom_volume':
+                await self.handle_custom_volume_input(update, text)
             elif state == 'awaiting_trainee_id':
-                await self.handle_trainee_id_input(update, text)  # ADD THIS
+                await self.handle_trainee_id_input(update, text)
             else:
                 await update.message.reply_text(
                     "I didn't understand that. Use /help to see available commands."
                 )
+
+        except Exception as e:
+            logger.error(f"Error in handle_message: {e}", exc_info=True)
+            await update.message.reply_text(
+                "Sorry, an error occurred. Please use /start to restart."
+            )
 
     async def handle_user_type_selection(self, update: Update, text: str):
         """Handle user type selection"""
