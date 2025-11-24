@@ -19,7 +19,6 @@ from keyboards import (
     get_reference_object_keyboard,
     remove_keyboard
 )
-import io
 import re
 from datetime import datetime
 
@@ -53,6 +52,7 @@ class FithubBot:
             raise
     
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /start command"""
         try:
             user = update.effective_user
             user_data = {
@@ -80,6 +80,7 @@ class FithubBot:
             await update.message.reply_text("Sorry, an error occurred. Please try again.")
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle all text messages based on user state"""
         try:
             user_id = update.effective_user.id
             text = update.message.text
@@ -89,232 +90,572 @@ class FithubBot:
             
             # User type selection
             if state == 'awaiting_user_type':
-                if 'Trainer' in text:
-                    self.db.save_user({
-                        'id': user_id,
-                        'username': update.effective_user.username,
-                        'first_name': update.effective_user.first_name,
-                        'last_name': update.effective_user.last_name,
-                        'user_type': 'trainer'
-                    })
-                    await update.message.reply_text(
-                        "👨‍🏫 You are registered as a Trainer!\n\n"
-                        "Now you can add your trainees and monitor their nutrition.\n\n"
-                        "Commands:\n"
-                        "/add_trainee - Add trainee\n"
-                        "/my_trainees - View my trainees\n"
-                        "/stats - Trainee statistics",
-                        reply_markup=remove_keyboard()
-                    )
-                    self.user_manager.set_user_state(user_id, 'main_menu')
-                    
-                elif 'Trainee' in text:
-                    self.db.save_user({
-                        'id': user_id,
-                        'username': update.effective_user.username,
-                        'first_name': update.effective_user.first_name,
-                        'last_name': update.effective_user.last_name,
-                        'user_type': 'trainee'
-                    })
-                    await update.message.reply_text(
-                        "🏃 You are registered as a Trainee!\n\n"
-                        "Let's set up your profile to calculate your personalized nutrition plan.\n\n"
-                        "Please enter your height in cm (e.g., 175):",
-                        reply_markup=remove_keyboard()
-                    )
-                    self.user_manager.set_user_state(user_id, 'awaiting_height')
+                await self.handle_user_type_selection(update, text)
             
-            # Height input
+            # Profile setup states
             elif state == 'awaiting_height':
-                try:
-                    height = float(text)
-                    if height < 100 or height > 250:
-                        await update.message.reply_text("Please enter a valid height (100-250 cm):")
-                        return
-                    
-                    self.user_manager.set_user_state(user_id, 'awaiting_weight', {'height': height})
-                    await update.message.reply_text(f"✅ Height: {height} cm\n\nNow enter your weight in kg (e.g., 70):")
-                except ValueError:
-                    await update.message.reply_text("Please enter a valid number:")
+                await self.handle_height_input(update, text)
             
-            # Weight input
             elif state == 'awaiting_weight':
-                try:
-                    weight = float(text)
-                    if weight < 30 or weight > 300:
-                        await update.message.reply_text("Please enter a valid weight (30-300 kg):")
-                        return
-                    
-                    data = self.user_manager.get_user_data(user_id)
-                    data['weight'] = weight
-                    self.user_manager.set_user_state(user_id, 'awaiting_age', data)
-                    await update.message.reply_text(f"✅ Weight: {weight} kg\n\nNow enter your age (e.g., 25):")
-                except ValueError:
-                    await update.message.reply_text("Please enter a valid number:")
+                await self.handle_weight_input(update, text)
             
-            # Age input
             elif state == 'awaiting_age':
-                try:
-                    age = int(text)
-                    if age < 10 or age > 100:
-                        await update.message.reply_text("Please enter a valid age (10-100):")
-                        return
-                    
-                    data = self.user_manager.get_user_data(user_id)
-                    data['age'] = age
-                    self.user_manager.set_user_state(user_id, 'awaiting_gender', data)
-                    await update.message.reply_text(
-                        f"✅ Age: {age}\n\nSelect your gender:",
-                        reply_markup=ReplyKeyboardMarkup(
-                            [['Male', 'Female']], 
-                            one_time_keyboard=True, 
-                            resize_keyboard=True
-                        )
-                    )
-                except ValueError:
-                    await update.message.reply_text("Please enter a valid number:")
+                await self.handle_age_input(update, text)
             
-            # Gender selection
             elif state == 'awaiting_gender':
-                if text in ['Male', 'Female']:
-                    data = self.user_manager.get_user_data(user_id)
-                    data['gender'] = text.lower()
-                    self.user_manager.set_user_state(user_id, 'awaiting_activity_level', data)
-                    await update.message.reply_text(
-                        f"✅ Gender: {text}\n\nSelect your activity level:",
-                        reply_markup=ReplyKeyboardMarkup([
-                            ['Sedentary (minimal activity)'],
-                            ['Light (exercise 1-3 days/week)'],
-                            ['Moderate (exercise 3-5 days/week)'],
-                            ['Active (exercise 6-7 days/week)'],
-                            ['Very Active (intense exercise + physical job)']
-                        ], one_time_keyboard=True, resize_keyboard=True)
-                    )
-                else:
-                    await update.message.reply_text("Please select Male or Female:")
+                await self.handle_gender_selection(update, text)
             
-            # Activity level selection
             elif state == 'awaiting_activity_level':
-                activity_map = {
-                    'Sedentary': 'sedentary',
-                    'Light': 'light',
-                    'Moderate': 'medium',
-                    'Active': 'active',
-                    'Very Active': 'very_active'
-                }
-                
-                activity_level = None
-                for key, value in activity_map.items():
-                    if key in text:
-                        activity_level = value
-                        break
-                
-                if activity_level:
-                    data = self.user_manager.get_user_data(user_id)
-                    data['activity_level'] = activity_level
-                    self.user_manager.set_user_state(user_id, 'awaiting_goal', data)
-                    await update.message.reply_text(
-                        f"✅ Activity level set\n\nSelect your goal:",
-                        reply_markup=ReplyKeyboardMarkup([
-                            ['Weight Loss'],
-                            ['Maintenance'],
-                            ['Weight Gain']
-                        ], one_time_keyboard=True, resize_keyboard=True)
-                    )
-                else:
-                    await update.message.reply_text("Please select an activity level from the menu:")
+                await self.handle_activity_level_selection(update, text)
             
-            # Goal selection
             elif state == 'awaiting_goal':
-                goal_map = {
-                    'Weight Loss': 'weight_loss',
-                    'Maintenance': 'maintenance',
-                    'Weight Gain': 'weight_gain'
-                }
-                
-                goal = goal_map.get(text)
-                
-                if goal:
-                    data = self.user_manager.get_user_data(user_id)
-                    data['goal'] = goal
-                    
-                    # Calculate CPFC
-                    cpfc = self.calculator.calculate_daily_cpfc(
-                        weight=data['weight'],
-                        height=data['height'],
-                        age=data['age'],
-                        gender=data['gender'],
-                        activity_level=data['activity_level'],
-                        goal=goal
-                    )
-                    
-                    # Save profile
-                    profile_data = {
-                        'height': data['height'],
-                        'weight': data['weight'],
-                        'age': data['age'],
-                        'gender': data['gender'],
-                        'activity_level': data['activity_level'],
-                        'goal': goal,
-                        'daily_calories': cpfc['calories']
-                    }
-                    self.db.update_user_profile(user_id, profile_data)
-                    
-                    await update.message.reply_html(
-                        f"✅ <b>Profile completed!</b>\n\n"
-                        f"📊 <b>Your personalized nutrition plan:</b>\n\n"
-                        f"🔥 Calories: <b>{cpfc['calories']:.0f} kcal/day</b>\n"
-                        f"🥩 Protein: <b>{cpfc['protein']:.0f} g/day</b>\n"
-                        f"🥑 Fat: <b>{cpfc['fat']:.0f} g/day</b>\n"
-                        f"🍞 Carbs: <b>{cpfc['carbs']:.0f} g/day</b>\n\n"
-                        f"Now you can track your meals!\n\n"
-                        f"<b>Commands:</b>\n"
-                        f"/add_meal - Add meal\n"
-                        f"/add_drink - Add drink\n"
-                        f"/today - Today's summary\n"
-                        f"/profile - View profile",
-                        reply_markup=remove_keyboard()
-                    )
-                    self.user_manager.set_user_state(user_id, 'main_menu')
-                else:
-                    await update.message.reply_text("Please select a goal from the menu:")
+                await self.handle_goal_selection(update, text)
             
-            # [Rest of your handle_message code continues here - keeping the same structure]
-            # For brevity, I'm showing the pattern - you'd continue with all other states
+            # Meal tracking states
+            elif state == 'awaiting_meal_type':
+                await self.handle_meal_type_selection(update, text)
             
+            elif state == 'awaiting_confirmation':
+                await self.handle_confirmation(update, text)
+            
+            elif state == 'awaiting_manual_input':
+                await self.handle_manual_food_input(update, text)
+            
+            # Drink tracking states
+            elif state == 'awaiting_drink_name':
+                await self.handle_drink_name_input(update, text)
+            
+            elif state == 'awaiting_drink_volume':
+                await self.handle_drink_volume_selection(update, text)
+            
+            elif state == 'awaiting_custom_volume':
+                await self.handle_custom_volume_input(update, text)
+            
+            else:
+                await update.message.reply_text(
+                    "I didn't understand that. Use /help to see available commands."
+                )
+                
         except Exception as e:
             logger.error(f"Error in handle_message: {e}", exc_info=True)
             await update.message.reply_text(
-                "Sorry, an error occurred processing your message. Please try again or use /start to restart."
+                "Sorry, an error occurred. Please use /start to restart."
             )
-
-        # Add these methods to your FithubBot class, right after handle_photo method:
-
-        async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-            user_id = update.effective_user.id
-            state = self.user_manager.get_user_state(user_id)
-
-            if state == 'awaiting_food_photo':
-                await update.message.reply_text("🔍 Analyzing photo...")
-
+    
+    async def handle_user_type_selection(self, update: Update, text: str):
+        """Handle user type selection (Trainer/Trainee)"""
+        user_id = update.effective_user.id
+        
+        if 'Trainer' in text:
+            self.db.save_user({
+                'id': user_id,
+                'username': update.effective_user.username,
+                'first_name': update.effective_user.first_name,
+                'last_name': update.effective_user.last_name,
+                'user_type': 'trainer'
+            })
+            await update.message.reply_text(
+                "👨‍🏫 You are registered as a Trainer!\n\n"
+                "Now you can add your trainees and monitor their nutrition.\n\n"
+                "Commands:\n"
+                "/add_trainee - Add trainee\n"
+                "/my_trainees - View my trainees\n"
+                "/stats - Trainee statistics",
+                reply_markup=remove_keyboard()
+            )
+            self.user_manager.set_user_state(user_id, 'main_menu')
+            
+        elif 'Trainee' in text:
+            self.db.save_user({
+                'id': user_id,
+                'username': update.effective_user.username,
+                'first_name': update.effective_user.first_name,
+                'last_name': update.effective_user.last_name,
+                'user_type': 'trainee'
+            })
+            await update.message.reply_text(
+                "🏃 You are registered as a Trainee!\n\n"
+                "Let's set up your profile to calculate your personalized nutrition plan.\n\n"
+                "Please enter your height in cm (e.g., 175):",
+                reply_markup=remove_keyboard()
+            )
+            self.user_manager.set_user_state(user_id, 'awaiting_height')
+    
+    async def handle_height_input(self, update: Update, text: str):
+        """Handle height input"""
+        user_id = update.effective_user.id
+        try:
+            height = float(text)
+            if height < 100 or height > 250:
+                await update.message.reply_text("Please enter a valid height (100-250 cm):")
+                return
+            
+            self.user_manager.set_user_state(user_id, 'awaiting_weight', {'height': height})
+            await update.message.reply_text(f"✅ Height: {height} cm\n\nNow enter your weight in kg (e.g., 70):")
+        except ValueError:
+            await update.message.reply_text("Please enter a valid number:")
+    
+    async def handle_weight_input(self, update: Update, text: str):
+        """Handle weight input"""
+        user_id = update.effective_user.id
+        try:
+            weight = float(text)
+            if weight < 30 or weight > 300:
+                await update.message.reply_text("Please enter a valid weight (30-300 kg):")
+                return
+            
+            data = self.user_manager.get_user_data(user_id)
+            data['weight'] = weight
+            self.user_manager.set_user_state(user_id, 'awaiting_age', data)
+            await update.message.reply_text(f"✅ Weight: {weight} kg\n\nNow enter your age (e.g., 25):")
+        except ValueError:
+            await update.message.reply_text("Please enter a valid number:")
+    
+    async def handle_age_input(self, update: Update, text: str):
+        """Handle age input"""
+        user_id = update.effective_user.id
+        try:
+            age = int(text)
+            if age < 10 or age > 100:
+                await update.message.reply_text("Please enter a valid age (10-100):")
+                return
+            
+            data = self.user_manager.get_user_data(user_id)
+            data['age'] = age
+            self.user_manager.set_user_state(user_id, 'awaiting_gender', data)
+            await update.message.reply_text(
+                f"✅ Age: {age}\n\nSelect your gender:",
+                reply_markup=ReplyKeyboardMarkup(
+                    [['Male', 'Female']], 
+                    one_time_keyboard=True, 
+                    resize_keyboard=True
+                )
+            )
+        except ValueError:
+            await update.message.reply_text("Please enter a valid number:")
+    
+    async def handle_gender_selection(self, update: Update, text: str):
+        """Handle gender selection"""
+        user_id = update.effective_user.id
+        if text in ['Male', 'Female']:
+            data = self.user_manager.get_user_data(user_id)
+            data['gender'] = text.lower()
+            self.user_manager.set_user_state(user_id, 'awaiting_activity_level', data)
+            await update.message.reply_text(
+                f"✅ Gender: {text}\n\nSelect your activity level:",
+                reply_markup=ReplyKeyboardMarkup([
+                    ['Sedentary (minimal activity)'],
+                    ['Light (exercise 1-3 days/week)'],
+                    ['Moderate (exercise 3-5 days/week)'],
+                    ['Active (exercise 6-7 days/week)'],
+                    ['Very Active (intense exercise + physical job)']
+                ], one_time_keyboard=True, resize_keyboard=True)
+            )
+        else:
+            await update.message.reply_text("Please select Male or Female:")
+    
+    async def handle_activity_level_selection(self, update: Update, text: str):
+        """Handle activity level selection"""
+        user_id = update.effective_user.id
+        activity_map = {
+            'Sedentary': 'sedentary',
+            'Light': 'light',
+            'Moderate': 'medium',
+            'Active': 'active',
+            'Very Active': 'very_active'
+        }
+        
+        activity_level = None
+        for key, value in activity_map.items():
+            if key in text:
+                activity_level = value
+                break
+        
+        if activity_level:
+            data = self.user_manager.get_user_data(user_id)
+            data['activity_level'] = activity_level
+            self.user_manager.set_user_state(user_id, 'awaiting_goal', data)
+            await update.message.reply_text(
+                f"✅ Activity level set\n\nSelect your goal:",
+                reply_markup=ReplyKeyboardMarkup([
+                    ['Weight Loss'],
+                    ['Maintenance'],
+                    ['Weight Gain']
+                ], one_time_keyboard=True, resize_keyboard=True)
+            )
+        else:
+            await update.message.reply_text("Please select an activity level from the menu:")
+    
+    async def handle_goal_selection(self, update: Update, text: str):
+        """Handle goal selection and complete profile setup"""
+        user_id = update.effective_user.id
+        goal_map = {
+            'Weight Loss': 'weight_loss',
+            'Maintenance': 'maintenance',
+            'Weight Gain': 'weight_gain'
+        }
+        
+        goal = goal_map.get(text)
+        
+        if goal:
+            data = self.user_manager.get_user_data(user_id)
+            data['goal'] = goal
+            
+            # Calculate CPFC
+            cpfc = self.calculator.calculate_daily_cpfc(
+                weight=data['weight'],
+                height=data['height'],
+                age=data['age'],
+                gender=data['gender'],
+                activity_level=data['activity_level'],
+                goal=goal
+            )
+            
+            # Save profile
+            profile_data = {
+                'height': data['height'],
+                'weight': data['weight'],
+                'age': data['age'],
+                'gender': data['gender'],
+                'activity_level': data['activity_level'],
+                'goal': goal,
+                'daily_calories': cpfc['calories']
+            }
+            self.db.update_user_profile(user_id, profile_data)
+            
+            await update.message.reply_html(
+                f"✅ <b>Profile completed!</b>\n\n"
+                f"📊 <b>Your personalized nutrition plan:</b>\n\n"
+                f"🔥 Calories: <b>{cpfc['calories']:.0f} kcal/day</b>\n"
+                f"🥩 Protein: <b>{cpfc['protein']:.0f} g/day</b>\n"
+                f"🥑 Fat: <b>{cpfc['fat']:.0f} g/day</b>\n"
+                f"🍞 Carbs: <b>{cpfc['carbs']:.0f} g/day</b>\n\n"
+                f"Now you can track your meals!\n\n"
+                f"<b>Commands:</b>\n"
+                f"/add_meal - Add meal\n"
+                f"/add_drink - Add drink\n"
+                f"/today - Today's summary\n"
+                f"/profile - View profile",
+                reply_markup=remove_keyboard()
+            )
+            self.user_manager.set_user_state(user_id, 'main_menu')
+        else:
+            await update.message.reply_text("Please select a goal from the menu:")
+    
+    async def handle_meal_type_selection(self, update: Update, text: str):
+        """Handle meal type selection"""
+        user_id = update.effective_user.id
+        if text in ['Breakfast', 'Lunch', 'Snack', 'Dinner']:
+            data = self.user_manager.get_user_data(user_id)
+            data['meal_type'] = text.lower()
+            self.user_manager.set_user_state(user_id, 'awaiting_food_photo', data)
+            await update.message.reply_text(
+                f"📸 Please send a photo of your {text.lower()}.\n\n"
+                f"💡 Tip: For better recognition, include a reference object (fork, spoon, card) in the photo.\n\n"
+                f"Or you can enter food items manually in format:\n"
+                f"food name - weight in grams\n\n"
+                f"Example:\n"
+                f"Chicken breast - 150\n"
+                f"Rice - 100\n"
+                f"Salad - 80",
+                reply_markup=remove_keyboard()
+            )
+        else:
+            await update.message.reply_text(
+                "Please select a meal type:",
+                reply_markup=get_meal_type_keyboard()
+            )
+    
+    async def handle_confirmation(self, update: Update, text: str):
+        """Handle meal confirmation"""
+        user_id = update.effective_user.id
+        if '✅' in text or 'Yes' in text:
+            data = self.user_manager.get_user_data(user_id)
+            
+            # Save meal
+            meal_data = {
+                'user_id': user_id,
+                'meal_type': data.get('meal_type', 'meal'),
+                'date': datetime.now().strftime('%Y-%m-%d'),
+                'calories': data.get('total_calories', 0),
+                'protein': data.get('total_protein', 0),
+                'fat': data.get('total_fat', 0),
+                'carbs': data.get('total_carbs', 0)
+            }
+            
+            meal_id = self.db.save_meal(meal_data)
+            
+            if meal_id:
+                # Get remaining CPFC for the day
+                remaining = self.calculator.get_remaining_cpfc(
+                    user_id,
+                    datetime.now().strftime('%Y-%m-%d')
+                )
+                
+                if remaining:
+                    await update.message.reply_html(
+                        f"✅ <b>Meal saved!</b>\n\n"
+                        f"📊 <b>Remaining for today:</b>\n\n"
+                        f"🔥 Calories: <b>{remaining['remaining_calories']:.0f} kcal</b>\n"
+                        f"🥩 Protein: <b>{remaining['remaining_protein']:.0f} g</b>\n"
+                        f"🥑 Fat: <b>{remaining['remaining_fat']:.0f} g</b>\n"
+                        f"🍞 Carbs: <b>{remaining['remaining_carbs']:.0f} g</b>",
+                        reply_markup=remove_keyboard()
+                    )
+                else:
+                    await update.message.reply_text(
+                        "✅ Meal saved successfully!",
+                        reply_markup=remove_keyboard()
+                    )
+                
+                self.user_manager.set_user_state(user_id, 'main_menu')
+            else:
+                await update.message.reply_text(
+                    "❌ Error saving meal. Please try again.",
+                    reply_markup=remove_keyboard()
+                )
+        
+        elif '❌' in text or 'No' in text:
+            await update.message.reply_text(
+                "Please enter the food items and their weights manually.\n\n"
+                "Format: food name - weight in grams\n"
+                "Example:\n"
+                "Chicken breast - 150\n"
+                "Rice - 100\n"
+                "Salad - 80",
+                reply_markup=remove_keyboard()
+            )
+            self.user_manager.set_user_state(update.effective_user.id, 'awaiting_manual_input')
+    
+    async def handle_manual_food_input(self, update: Update, text: str):
+        """Handle manual food input"""
+        user_id = update.effective_user.id
+        data = self.user_manager.get_user_data(user_id)
+        
+        # Parse input
+        lines = text.strip().split('\n')
+        food_items = []
+        
+        for line in lines:
+            try:
+                # Format: food name - weight
+                parts = line.split('-')
+                if len(parts) == 2:
+                    food_name = parts[0].strip()
+                    weight = float(parts[1].strip())
+                    food_items.append({'name': food_name, 'weight': weight})
+            except:
+                continue
+        
+        if not food_items:
+            await update.message.reply_text(
+                "❌ Could not parse input. Please use the format:\n\n"
+                "food name - weight\n\n"
+                "Example:\n"
+                "Chicken - 150\n"
+                "Rice - 100"
+            )
+            return
+        
+        # Calculate CPFC for meal
+        meal_cpfc = self.calculator.calculate_meal_cpfc(food_items)
+        
+        if not meal_cpfc:
+            meal_cpfc = {'calories': 0, 'protein': 0, 'fat': 0, 'carbs': 0}
+        
+        # Display for confirmation
+        items_text = "\n".join([f"• {item['name']}: {item['weight']}g" for item in food_items])
+        
+        data['food_items'] = food_items
+        data['total_calories'] = meal_cpfc['calories']
+        data['total_protein'] = meal_cpfc['protein']
+        data['total_fat'] = meal_cpfc['fat']
+        data['total_carbs'] = meal_cpfc['carbs']
+        
+        self.user_manager.set_user_state(user_id, 'awaiting_confirmation', data)
+        
+        await update.message.reply_html(
+            f"📝 <b>Your meal:</b>\n\n"
+            f"{items_text}\n\n"
+            f"📊 <b>Nutrition:</b>\n"
+            f"🔥 Calories: <b>{meal_cpfc['calories']:.0f} kcal</b>\n"
+            f"🥩 Protein: <b>{meal_cpfc['protein']:.0f} g</b>\n"
+            f"🥑 Fat: <b>{meal_cpfc['fat']:.0f} g</b>\n"
+            f"🍞 Carbs: <b>{meal_cpfc['carbs']:.0f} g</b>\n\n"
+            f"Is this correct?",
+            reply_markup=get_confirm_keyboard()
+        )
+    
+    async def handle_drink_name_input(self, update: Update, text: str):
+        """Handle drink name input"""
+        user_id = update.effective_user.id
+        drink_name = text.strip()
+        
+        # Search in database
+        drink_info = self.drink_manager.get_drink_nutrition(drink_name, 250)  # Default 250ml
+        
+        if drink_info:
+            data = {'drink_name': drink_name, 'drink_info': drink_info}
+            self.user_manager.set_user_state(user_id, 'awaiting_drink_volume', data)
+            await update.message.reply_text(
+                f"✅ Found: {drink_name}\n\n"
+                f"Select volume:",
+                reply_markup=get_drink_volumes_keyboard()
+            )
+        else:
+            # Search for similar drinks
+            similar = self.drink_manager.search_drinks(drink_name)
+            
+            if similar:
+                await update.message.reply_text(
+                    f"Drink '{drink_name}' not found.\n\n"
+                    f"Did you mean:\n" + "\n".join(f"• {d}" for d in similar[:5]) + "\n\n"
+                    f"Please enter the drink name again:",
+                    reply_markup=remove_keyboard()
+                )
+            else:
+                await update.message.reply_text(
+                    f"❌ Drink '{drink_name}' not found in database.\n\n"
+                    f"Please try another name.\n\n"
+                    f"Enter drink name:",
+                    reply_markup=remove_keyboard()
+                )
+    
+    async def handle_drink_volume_selection(self, update: Update, text: str):
+        """Handle drink volume selection"""
+        user_id = update.effective_user.id
+        volume_ml = None
+        
+        if 'ml' in text or 'glass' in text or 'can' in text or 'bottle' in text or 'liter' in text:
+            # Extract number
+            numbers = re.findall(r'\d+', text)
+            if numbers:
+                volume_ml = int(numbers[0])
+        elif 'Other' in text:
+            await update.message.reply_text(
+                "Enter volume in ml (e.g., 350):",
+                reply_markup=remove_keyboard()
+            )
+            self.user_manager.set_user_state(user_id, 'awaiting_custom_volume')
+            return
+        
+        if volume_ml:
+            data = self.user_manager.get_user_data(user_id)
+            drink_name = data.get('drink_name', 'Unknown')
+            
+            # Recalculate with actual volume
+            drink_info = self.drink_manager.get_drink_nutrition(drink_name, volume_ml)
+            
+            if not drink_info:
+                drink_info = {'calories': 0, 'protein': 0, 'fat': 0, 'carbs': 0}
+            
+            # Save drink
+            drink_data = {
+                'user_id': user_id,
+                'drink_name': drink_name,
+                'volume_ml': volume_ml,
+                'calories': drink_info['calories'],
+                'protein': drink_info['protein'],
+                'fat': drink_info['fat'],
+                'carbs': drink_info['carbs'],
+                'date': datetime.now().strftime('%Y-%m-%d')
+            }
+            
+            if self.db.save_drink(drink_data):
+                await update.message.reply_html(
+                    f"✅ <b>Drink saved!</b>\n\n"
+                    f"🥤 {drink_name} ({volume_ml}ml)\n\n"
+                    f"📊 <b>Nutrition:</b>\n"
+                    f"🔥 Calories: <b>{drink_info['calories']:.0f} kcal</b>\n"
+                    f"🥩 Protein: <b>{drink_info['protein']:.1f} g</b>\n"
+                    f"🥑 Fat: <b>{drink_info['fat']:.1f} g</b>\n"
+                    f"🍞 Carbs: <b>{drink_info['carbs']:.1f} g</b>",
+                    reply_markup=remove_keyboard()
+                )
+                self.user_manager.set_user_state(user_id, 'main_menu')
+            else:
+                await update.message.reply_text(
+                    "❌ Error saving drink. Please try again.",
+                    reply_markup=remove_keyboard()
+                )
+        else:
+            await update.message.reply_text(
+                "Please select volume from the menu:",
+                reply_markup=get_drink_volumes_keyboard()
+            )
+    
+    async def handle_custom_volume_input(self, update: Update, text: str):
+        """Handle custom volume input"""
+        user_id = update.effective_user.id
+        try:
+            volume_ml = int(text)
+            if volume_ml < 1 or volume_ml > 5000:
+                await update.message.reply_text("Please enter a valid volume (1-5000 ml):")
+                return
+            
+            data = self.user_manager.get_user_data(user_id)
+            drink_name = data.get('drink_name', 'Unknown')
+            
+            drink_info = self.drink_manager.get_drink_nutrition(drink_name, volume_ml)
+            
+            if not drink_info:
+                drink_info = {'calories': 0, 'protein': 0, 'fat': 0, 'carbs': 0}
+            
+            drink_data = {
+                'user_id': user_id,
+                'drink_name': drink_name,
+                'volume_ml': volume_ml,
+                'calories': drink_info['calories'],
+                'protein': drink_info['protein'],
+                'fat': drink_info['fat'],
+                'carbs': drink_info['carbs'],
+                'date': datetime.now().strftime('%Y-%m-%d')
+            }
+            
+            if self.db.save_drink(drink_data):
+                await update.message.reply_html(
+                    f"✅ <b>Drink saved!</b>\n\n"
+                    f"🥤 {drink_name} ({volume_ml}ml)\n\n"
+                    f"📊 <b>Nutrition:</b>\n"
+                    f"🔥 Calories: <b>{drink_info['calories']:.0f} kcal</b>\n"
+                    f"🥩 Protein: <b>{drink_info['protein']:.1f} g</b>\n"
+                    f"🥑 Fat: <b>{drink_info['fat']:.1f} g</b>\n"
+                    f"🍞 Carbs: <b>{drink_info['carbs']:.1f} g</b>",
+                    reply_markup=remove_keyboard()
+                )
+                self.user_manager.set_user_state(user_id, 'main_menu')
+            else:
+                await update.message.reply_text("❌ Error saving drink.")
+        except ValueError:
+            await update.message.reply_text("Please enter a valid number:")
+    
+    async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle photo messages"""
+        user_id = update.effective_user.id
+        state = self.user_manager.get_user_state(user_id)
+        
+        if state == 'awaiting_food_photo':
+            await update.message.reply_text("🔍 Analyzing photo...")
+            
+            try:
                 # Get the largest photo
                 photo = update.message.photo[-1]
                 photo_file = await photo.get_file()
                 photo_bytes = await photo_file.download_as_bytearray()
-
+                
                 # Recognize food
                 result = self.vision.detect_food_items(bytes(photo_bytes))
-
+                
                 if result['success'] and result['items']:
                     items_text = "\n".join([
-                        f"• {item['name']} (confidence: {item['confidence'] * 100:.0f}%)"
+                        f"• {item['name']} (confidence: {item['confidence']*100:.0f}%)"
                         for item in result['items'][:5]
                     ])
-
+                    
                     data = self.user_manager.get_user_data(user_id)
                     data['recognized_items'] = result['items'][:5]
                     self.user_manager.set_user_state(user_id, 'awaiting_manual_input', data)
-
+                    
                     await update.message.reply_html(
                         f"✅ <b>Recognized:</b>\n\n"
                         f"{items_text}\n\n"
@@ -336,46 +677,53 @@ class FithubBot:
                         reply_markup=remove_keyboard()
                     )
                     self.user_manager.set_user_state(user_id, 'awaiting_manual_input')
-            else:
-                await update.message.reply_text("Please use /add_meal to start adding a meal.")
-
-        # Commands
-        async def add_meal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-            user_id = update.effective_user.id
-
-            await update.message.reply_text(
-                "🍽️ Select meal type:",
-                reply_markup=get_meal_type_keyboard()
-            )
-            self.user_manager.set_user_state(user_id, 'awaiting_meal_type')
-
-        async def add_drink_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-            user_id = update.effective_user.id
-
-            await update.message.reply_text(
-                "🥤 Enter drink name (e.g., Cola, Coffee, Orange Juice):",
-                reply_markup=remove_keyboard()
-            )
-            self.user_manager.set_user_state(user_id, 'awaiting_drink_name')
-
-        async def today_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-            user_id = update.effective_user.id
-
+            except Exception as e:
+                logger.error(f"Error processing photo: {e}")
+                await update.message.reply_text(
+                    "Error processing photo. Please enter food manually.",
+                    reply_markup=remove_keyboard()
+                )
+                self.user_manager.set_user_state(user_id, 'awaiting_manual_input')
+        else:
+            await update.message.reply_text("Please use /add_meal to start adding a meal.")
+    
+    # Command methods
+    async def add_meal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /add_meal command"""
+        user_id = update.effective_user.id
+        
+        await update.message.reply_text(
+            "🍽️ Select meal type:",
+            reply_markup=get_meal_type_keyboard()
+        )
+        self.user_manager.set_user_state(user_id, 'awaiting_meal_type')
+    
+    async def add_drink_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /add_drink command"""
+        user_id = update.effective_user.id
+        
+        await update.message.reply_text(
+            "🥤 Enter drink name (e.g., Cola, Coffee, Orange Juice):",
+            reply_markup=remove_keyboard()
+        )
+        self.user_manager.set_user_state(user_id, 'awaiting_drink_name')
+    
+    async def today_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /today command"""
+        user_id = update.effective_user.id
+        
+        try:
             remaining = self.calculator.get_remaining_cpfc(
                 user_id,
                 datetime.now().strftime('%Y-%m-%d')
             )
-
+            
             if remaining:
-                progress_calories = (remaining['consumed_calories'] / remaining['target_calories']) * 100 if remaining[
-                                                                                                                 'target_calories'] > 0 else 0
-                progress_protein = (remaining['consumed_protein'] / remaining['target_protein']) * 100 if remaining[
-                                                                                                              'target_protein'] > 0 else 0
-                progress_fat = (remaining['consumed_fat'] / remaining['target_fat']) * 100 if remaining[
-                                                                                                  'target_fat'] > 0 else 0
-                progress_carbs = (remaining['consumed_carbs'] / remaining['target_carbs']) * 100 if remaining[
-                                                                                                        'target_carbs'] > 0 else 0
-
+                progress_calories = (remaining['consumed_calories'] / remaining['target_calories']) * 100 if remaining['target_calories'] > 0 else 0
+                progress_protein = (remaining['consumed_protein'] / remaining['target_protein']) * 100 if remaining['target_protein'] > 0 else 0
+                progress_fat = (remaining['consumed_fat'] / remaining['target_fat']) * 100 if remaining['target_fat'] > 0 else 0
+                progress_carbs = (remaining['consumed_carbs'] / remaining['target_carbs']) * 100 if remaining['target_carbs'] > 0 else 0
+                
                 await update.message.reply_html(
                     f"📊 <b>Today's Summary</b>\n\n"
                     f"<b>Consumed / Target:</b>\n\n"
@@ -393,58 +741,62 @@ class FithubBot:
                 await update.message.reply_text(
                     "Please complete your profile first using /start"
                 )
-
-        async def profile_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-            user_id = update.effective_user.id
-            profile = self.db.get_user_profile(user_id)
-
-            if profile:
-                activity_names = {
-                    'sedentary': 'Sedentary',
-                    'light': 'Light',
-                    'medium': 'Moderate',
-                    'active': 'Active',
-                    'very_active': 'Very Active'
-                }
-
-                goal_names = {
-                    'weight_loss': 'Weight Loss',
-                    'maintenance': 'Maintenance',
-                    'weight_gain': 'Weight Gain'
-                }
-
-                await update.message.reply_html(
-                    f"👤 <b>Your Profile</b>\n\n"
-                    f"📏 Height: <b>{profile.get('height', 'Not set')} cm</b>\n"
-                    f"⚖️ Weight: <b>{profile.get('weight', 'Not set')} kg</b>\n"
-                    f"🎂 Age: <b>{profile.get('age', 'Not set')}</b>\n"
-                    f"⚧️ Gender: <b>{profile.get('gender', 'Not set').title()}</b>\n"
-                    f"🏃 Activity: <b>{activity_names.get(profile.get('activity_level'), 'Not set')}</b>\n"
-                    f"🎯 Goal: <b>{goal_names.get(profile.get('goal'), 'Not set')}</b>\n\n"
-                    f"📊 <b>Daily Target:</b>\n"
-                    f"🔥 Calories: <b>{profile.get('daily_calories', 0):.0f} kcal</b>"
-                )
-            else:
-                await update.message.reply_text(
-                    "Profile not found. Please complete registration using /start"
-                )
-
-        async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        except Exception as e:
+            logger.error(f"Error in today_command: {e}")
+            await update.message.reply_text("Error getting today's summary. Please try again.")
+    
+    async def profile_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /profile command"""
+        user_id = update.effective_user.id
+        profile = self.db.get_user_profile(user_id)
+        
+        if profile:
+            activity_names = {
+                'sedentary': 'Sedentary',
+                'light': 'Light',
+                'medium': 'Moderate',
+                'active': 'Active',
+                'very_active': 'Very Active'
+            }
+            
+            goal_names = {
+                'weight_loss': 'Weight Loss',
+                'maintenance': 'Maintenance',
+                'weight_gain': 'Weight Gain'
+            }
+            
             await update.message.reply_html(
-                "<b>📱 Available Commands:</b>\n\n"
-                "/start - Start/Restart bot\n"
-                "/add_meal - Add meal\n"
-                "/add_drink - Add drink\n"
-                "/today - Today's summary\n"
-                "/profile - View profile\n"
-                "/help - This help message\n\n"
-                "<b>💡 How it works:</b>\n\n"
-                "1. Complete your profile\n"
-                "2. Add meals by photo or manually\n"
-                "3. Track your daily nutrition\n"
-                "4. Achieve your goals!"
+                f"👤 <b>Your Profile</b>\n\n"
+                f"📏 Height: <b>{profile.get('height', 'Not set')} cm</b>\n"
+                f"⚖️ Weight: <b>{profile.get('weight', 'Not set')} kg</b>\n"
+                f"🎂 Age: <b>{profile.get('age', 'Not set')}</b>\n"
+                f"⚧️ Gender: <b>{profile.get('gender', 'Not set').title()}</b>\n"
+                f"🏃 Activity: <b>{activity_names.get(profile.get('activity_level'), 'Not set')}</b>\n"
+                f"🎯 Goal: <b>{goal_names.get(profile.get('goal'), 'Not set')}</b>\n\n"
+                f"📊 <b>Daily Target:</b>\n"
+                f"🔥 Calories: <b>{profile.get('daily_calories', 0):.0f} kcal</b>"
             )
-
+        else:
+            await update.message.reply_text(
+                "Profile not found. Please complete registration using /start"
+            )
+    
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /help command"""
+        await update.message.reply_html(
+            "<b>📱 Available Commands:</b>\n\n"
+            "/start - Start/Restart bot\n"
+            "/add_meal - Add meal\n"
+            "/add_drink - Add drink\n"
+            "/today - Today's summary\n"
+            "/profile - View profile\n"
+            "/help - This help message\n\n"
+            "<b>💡 How it works:</b>\n\n"
+            "1. Complete your profile\n"
+            "2. Add meals by photo or manually\n"
+            "3. Track your daily nutrition\n"
+            "4. Achieve your goals!"
+        )
 
 def main():
     """Main function to run the bot"""
@@ -464,7 +816,7 @@ def main():
         application = Application.builder().token(Config.BOT_TOKEN).build()
         logger.info("Application builder configured")
         
-        # Register handlers
+        # Register command handlers
         application.add_handler(CommandHandler("start", bot.start))
         application.add_handler(CommandHandler("add_meal", bot.add_meal_command))
         application.add_handler(CommandHandler("add_drink", bot.add_drink_command))
@@ -472,7 +824,7 @@ def main():
         application.add_handler(CommandHandler("profile", bot.profile_command))
         application.add_handler(CommandHandler("help", bot.help_command))
         
-        # Message handlers
+        # Register message handlers
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
         application.add_handler(MessageHandler(filters.PHOTO, bot.handle_photo))
         
