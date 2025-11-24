@@ -24,78 +24,225 @@ class VisionAPI:
             self.client = None
     
     def detect_food_items(self, image_content):
-        """Main function for food recognition"""
+        """Enhanced food recognition with better item identification"""
         if not self.client:
             return self._get_fallback_response()
         
         try:
             image = vision.Image(content=image_content)
             
-            # Get different types of analysis
+            # Get multiple types of analysis for better accuracy
             objects_response = self.client.object_localization(image=image)
             objects = objects_response.localized_object_annotations
             
             label_response = self.client.label_detection(image=image)
             labels = label_response.label_annotations
             
-            # Analyze results
-            food_items = self._analyze_food_objects(objects, labels)
+            # Web detection for better food identification
+            web_response = self.client.web_detection(image=image)
+            web_entities = web_response.web_detection.web_entities
+            
+            # Combine all sources for better recognition
+            food_items = self._analyze_and_combine_results(objects, labels, web_entities)
             
             if not food_items:
                 return self._get_fallback_response()
             
+            # Estimate weights based on visual analysis
+            food_items_with_weights = self._estimate_weights_for_items(food_items, image_content)
+            
             return {
                 'success': True,
-                'items': food_items,
-                'confidence': self._calculate_average_confidence(food_items)
+                'items': food_items_with_weights,
+                'confidence': self._calculate_average_confidence(food_items_with_weights)
             }
             
         except Exception as e:
             logger.error(f"Vision API error: {e}")
             return self._get_fallback_response()
     
-    def _analyze_food_objects(self, objects, labels):
-        """Analyze detected objects and labels"""
+    def _analyze_and_combine_results(self, objects, labels, web_entities):
+        """Combine multiple detection sources for accurate food identification"""
         food_items = []
-        food_keywords = [
-            'food', 'dish', 'meal', 'plate', 'fruit', 'vegetable',
-            'meat', 'fish', 'bread', 'salad', 'soup', 'dessert',
-            'drink', 'beverage', 'snack', 'breakfast', 'lunch', 'dinner'
-        ]
+        seen_items = set()
         
-        # Process objects
+        # Comprehensive food database for matching
+        food_database = {
+            # Proteins
+            'egg': ['egg', 'boiled egg', 'hard boiled', 'soft boiled', 'eggs'],
+            'chicken': ['chicken', 'chicken breast', 'poultry', 'grilled chicken'],
+            'beef': ['beef', 'steak', 'meat', 'ground beef'],
+            'fish': ['fish', 'salmon', 'tuna', 'seafood'],
+            'pork': ['pork', 'bacon', 'ham', 'sausage'],
+            
+            # Vegetables
+            'carrot': ['carrot', 'carrots', 'carrot stick'],
+            'broccoli': ['broccoli', 'broccoli floret'],
+            'tomato': ['tomato', 'tomatoes', 'cherry tomato'],
+            'lettuce': ['lettuce', 'salad', 'leafy green', 'greens', 'salad greens'],
+            'cucumber': ['cucumber', 'cucumbers'],
+            'bell pepper': ['bell pepper', 'pepper', 'capsicum'],
+            'spinach': ['spinach', 'leafy vegetable'],
+            
+            # Fruits
+            'orange': ['orange', 'oranges', 'citrus', 'orange slice'],
+            'apple': ['apple', 'apples'],
+            'banana': ['banana', 'bananas'],
+            'berry': ['berry', 'berries', 'strawberry', 'blueberry'],
+            'grape': ['grape', 'grapes'],
+            'watermelon': ['watermelon', 'melon'],
+            
+            # Grains & Carbs
+            'rice': ['rice', 'white rice', 'brown rice', 'steamed rice'],
+            'bread': ['bread', 'toast', 'slice of bread', 'baguette'],
+            'pasta': ['pasta', 'noodles', 'spaghetti', 'macaroni'],
+            'potato': ['potato', 'potatoes', 'baked potato'],
+            'muffin': ['muffin', 'cupcake', 'baked good', 'breakfast muffin'],
+            'oatmeal': ['oatmeal', 'oats', 'porridge'],
+            
+            # Dairy
+            'cheese': ['cheese', 'cheddar', 'mozzarella'],
+            'yogurt': ['yogurt', 'yoghurt'],
+            'milk': ['milk', 'dairy'],
+        }
+        
+        # Process web entities (most specific)
+        for entity in web_entities[:10]:
+            description = entity.description.lower()
+            score = entity.score
+            
+            # Match against food database
+            for food_name, keywords in food_database.items():
+                if any(keyword in description for keyword in keywords):
+                    if food_name not in seen_items and score > 0.3:
+                        food_items.append({
+                            'name': food_name.title(),
+                            'confidence': score,
+                            'source': 'web_entity'
+                        })
+                        seen_items.add(food_name)
+                        break
+        
+        # Process object localization
         for obj in objects:
             name = obj.name.lower()
-            if any(keyword in name for keyword in food_keywords) or self._is_food_item(name):
-                food_items.append({
-                    'name': obj.name,
-                    'confidence': obj.score,
-                    'type': 'object'
-                })
+            
+            for food_name, keywords in food_database.items():
+                if any(keyword in name for keyword in keywords):
+                    if food_name not in seen_items and obj.score > 0.5:
+                        food_items.append({
+                            'name': food_name.title(),
+                            'confidence': obj.score,
+                            'source': 'object',
+                            'bounding_box': self._get_bounding_box_size(obj.bounding_poly)
+                        })
+                        seen_items.add(food_name)
+                        break
         
-        # Process labels if no objects found
-        if not food_items:
-            for label in labels[:10]:  # Top 10 labels
-                name = label.description.lower()
-                if any(keyword in name for keyword in food_keywords) or self._is_food_item(name):
-                    food_items.append({
-                        'name': label.description,
-                        'confidence': label.score,
-                        'type': 'label'
-                    })
+        # Process labels (fallback)
+        for label in labels[:15]:
+            description = label.description.lower()
+            
+            for food_name, keywords in food_database.items():
+                if any(keyword in description for keyword in keywords):
+                    if food_name not in seen_items and label.score > 0.6:
+                        food_items.append({
+                            'name': food_name.title(),
+                            'confidence': label.score,
+                            'source': 'label'
+                        })
+                        seen_items.add(food_name)
+                        break
         
         return food_items
     
-    def _is_food_item(self, name):
-        """Check if item name is food-related"""
-        food_categories = [
-            'chicken', 'beef', 'pork', 'fish', 'salmon', 'tuna',
-            'rice', 'pasta', 'potato', 'tomato', 'cucumber', 'lettuce',
-            'apple', 'banana', 'orange', 'grape', 'berry',
-            'cheese', 'egg', 'milk', 'yogurt', 'butter',
-            'bread', 'cake', 'cookie', 'pie', 'chocolate'
-        ]
-        return any(category in name for category in food_categories)
+    def _get_bounding_box_size(self, bounding_poly):
+        """Calculate relative size of bounding box"""
+        vertices = bounding_poly.normalized_vertices
+        if len(vertices) >= 2:
+            width = abs(vertices[1].x - vertices[0].x)
+            height = abs(vertices[2].y - vertices[0].y) if len(vertices) > 2 else 0
+            area = width * height
+            return {'width': width, 'height': height, 'area': area}
+        return None
+    
+    def _estimate_weights_for_items(self, food_items, image_content):
+        """Estimate weights based on visual size and typical portions"""
+        
+        # Standard portion weights (in grams)
+        standard_portions = {
+            'egg': 50,  # One large egg
+            'carrot': 60,  # Medium carrot stick
+            'orange': 130,  # Medium orange slice (1/4 of whole)
+            'lettuce': 30,  # Small handful
+            'muffin': 80,  # Medium muffin
+            'chicken': 150,  # Standard serving
+            'beef': 150,
+            'fish': 150,
+            'rice': 150,  # Cooked rice serving
+            'bread': 30,  # One slice
+            'pasta': 180,  # Cooked pasta serving
+            'broccoli': 85,
+            'tomato': 100,
+            'apple': 150,
+            'banana': 120,
+            'potato': 150,
+            'cheese': 30,
+            'yogurt': 150,
+        }
+        
+        # Add estimated weights to items
+        for item in food_items:
+            food_name = item['name'].lower()
+            base_weight = standard_portions.get(food_name, 100)
+            
+            # Adjust based on bounding box size if available
+            if 'bounding_box' in item and item['bounding_box']:
+                size_multiplier = self._calculate_size_multiplier(item['bounding_box'])
+                estimated_weight = int(base_weight * size_multiplier)
+            else:
+                # Use count heuristic if multiple items detected
+                count = self._estimate_item_count(item, food_items)
+                estimated_weight = int(base_weight * count)
+            
+            # Clamp to reasonable range
+            item['estimated_weight'] = max(20, min(500, estimated_weight))
+        
+        return food_items
+    
+    def _calculate_size_multiplier(self, bounding_box):
+        """Calculate size multiplier based on bounding box area"""
+        area = bounding_box.get('area', 0.1)
+        
+        # Typical food item on plate occupies 0.05-0.20 of image
+        if area < 0.03:
+            return 0.5  # Small portion
+        elif area < 0.08:
+            return 1.0  # Standard portion
+        elif area < 0.15:
+            return 1.5  # Large portion
+        else:
+            return 2.0  # Very large portion
+    
+    def _estimate_item_count(self, current_item, all_items):
+        """Estimate how many of this item are present"""
+        food_name = current_item['name'].lower()
+        
+        # Count how many times this food appears in detection
+        count = sum(1 for item in all_items if item['name'].lower() == food_name)
+        
+        # Special cases
+        if 'egg' in food_name:
+            # Eggs often come in multiples (2-4 typical)
+            return min(count, 4)
+        elif any(fruit in food_name for fruit in ['orange', 'apple', 'banana']):
+            # Fruit slices
+            return min(count, 6)
+        elif 'carrot' in food_name:
+            # Carrot sticks
+            return min(count, 8)
+        
+        return max(1, count)
     
     def _calculate_average_confidence(self, items):
         """Calculate average confidence score"""
@@ -112,113 +259,15 @@ class VisionAPI:
             'confidence': 0,
             'message': 'Could not recognize food items. Please enter manually.'
         }
+
+# Test function for debugging
+def test_vision_api():
+    """Test function to verify Vision API setup"""
+    vision_api = VisionAPI()
     
-    def detect_reference_object(self, image_content, reference_type='fork'):
-        """Detect reference object for size estimation"""
-        if not self.client:
-            return None
-        
-        try:
-            image = vision.Image(content=image_content)
-            objects_response = self.client.object_localization(image=image)
-            objects = objects_response.localized_object_annotations
-            
-            # Standard sizes in cm
-            reference_sizes = {
-                'fork': 20,
-                'spoon': 18,
-                'phone': 15,
-                'card': 8.5,
-                'palm': 18
-            }
-            
-            for obj in objects:
-                if reference_type.lower() in obj.name.lower():
-                    # Get bounding box
-                    vertices = obj.bounding_poly.normalized_vertices
-                    width = abs(vertices[1].x - vertices[0].x)
-                    height = abs(vertices[2].y - vertices[0].y)
-                    
-                    # Estimate size
-                    pixel_size = math.sqrt(width**2 + height**2)
-                    real_size = reference_sizes.get(reference_type, 15)
-                    
-                    return {
-                        'found': True,
-                        'type': reference_type,
-                        'pixel_size': pixel_size,
-                        'real_size_cm': real_size,
-                        'scale_factor': real_size / pixel_size if pixel_size > 0 else 1
-                    }
-            
-            return {'found': False}
-            
-        except Exception as e:
-            logger.error(f"Reference object detection error: {e}")
-            return None
+    if not vision_api.client:
+        print("❌ Vision API not initialized. Check your GOOGLE_VISION_API_KEY")
+        return False
     
-    def estimate_portion_size(self, image_content, food_item, reference_object=None):
-        """Estimate portion size based on reference object"""
-        if not self.client or not reference_object or not reference_object.get('found'):
-            return self._get_default_portion()
-        
-        try:
-            image = vision.Image(content=image_content)
-            objects_response = self.client.object_localization(image=image)
-            objects = objects_response.localized_object_annotations
-            
-            for obj in objects:
-                if food_item.lower() in obj.name.lower():
-                    vertices = obj.bounding_poly.normalized_vertices
-                    width = abs(vertices[1].x - vertices[0].x)
-                    height = abs(vertices[2].y - vertices[0].y)
-                    
-                    pixel_size = math.sqrt(width**2 + height**2)
-                    scale_factor = reference_object.get('scale_factor', 1)
-                    estimated_size_cm = pixel_size * scale_factor
-                    
-                    # Rough weight estimation (very approximate)
-                    estimated_weight = self._estimate_weight_from_size(food_item, estimated_size_cm)
-                    
-                    return {
-                        'estimated': True,
-                        'size_cm': round(estimated_size_cm, 1),
-                        'weight_grams': estimated_weight
-                    }
-            
-            return self._get_default_portion()
-            
-        except Exception as e:
-            logger.error(f"Portion size estimation error: {e}")
-            return self._get_default_portion()
-    
-    def _estimate_weight_from_size(self, food_item, size_cm):
-        """Rough weight estimation based on size (very approximate)"""
-        # This is a very rough estimation and should be improved
-        density_factors = {
-            'default': 50,
-            'bread': 30,
-            'meat': 70,
-            'vegetable': 40,
-            'fruit': 45
-        }
-        
-        food_lower = food_item.lower()
-        factor = density_factors['default']
-        
-        for category, value in density_factors.items():
-            if category in food_lower:
-                factor = value
-                break
-        
-        # Very rough calculation: size^2 * density factor
-        estimated_weight = (size_cm ** 2) * factor / 10
-        return round(max(50, min(500, estimated_weight)), 0)  # Between 50-500g
-    
-    def _get_default_portion(self):
-        """Default portion when estimation fails"""
-        return {
-            'estimated': False,
-            'size_cm': 0,
-            'weight_grams': 100  # Default 100g
-        }
+    print("✅ Vision API initialized successfully")
+    return True

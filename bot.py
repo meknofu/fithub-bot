@@ -628,44 +628,57 @@ class FithubBot:
                 await update.message.reply_text("❌ Error saving drink.")
         except ValueError:
             await update.message.reply_text("Please enter a valid number:")
-    
+
     async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle photo messages"""
+        """Handle photo messages with improved food recognition"""
         user_id = update.effective_user.id
         state = self.user_manager.get_user_state(user_id)
-        
+
         if state == 'awaiting_food_photo':
             await update.message.reply_text("🔍 Analyzing photo...")
-            
+
             try:
                 # Get the largest photo
                 photo = update.message.photo[-1]
                 photo_file = await photo.get_file()
                 photo_bytes = await photo_file.download_as_bytearray()
-                
+
                 # Recognize food
                 result = self.vision.detect_food_items(bytes(photo_bytes))
-                
+
                 if result['success'] and result['items']:
-                    items_text = "\n".join([
-                        f"• {item['name']} (confidence: {item['confidence']*100:.0f}%)"
-                        for item in result['items'][:5]
-                    ])
-                    
+                    # Format recognized items with estimated weights
+                    items_list = []
+                    for item in result['items'][:10]:  # Max 10 items
+                        name = item['name']
+                        confidence = item['confidence'] * 100
+                        weight = item.get('estimated_weight', 100)
+                        items_list.append(f"{name} - {weight}g (confidence: {confidence:.0f}%)")
+
+                    items_text = "\n".join(items_list)
+
                     data = self.user_manager.get_user_data(user_id)
-                    data['recognized_items'] = result['items'][:5]
-                    self.user_manager.set_user_state(user_id, 'awaiting_manual_input', data)
-                    
+                    data['recognized_items'] = result['items'][:10]
+
                     await update.message.reply_html(
-                        f"✅ <b>Recognized:</b>\n\n"
+                        f"✅ <b>Recognized with estimated weights:</b>\n\n"
                         f"{items_text}\n\n"
-                        f"Please enter the weights for each item.\n\n"
-                        f"Format: food name - weight in grams\n"
-                        f"Example:\n"
-                        f"Chicken - 150\n"
-                        f"Rice - 100",
-                        reply_markup=remove_keyboard()
+                        f"📝 <b>You can now:</b>\n"
+                        f"1️⃣ Accept these weights and items by typing:\n"
+                        f"   <code>/confirm</code>\n\n"
+                        f"2️⃣ Or adjust the weights manually:\n\n"
+                        f"<b>Format:</b> food name - weight in grams\n\n"
+                        f"<b>Example:</b>\n"
+                        f"<code>Egg - 50\n"
+                        f"Carrot - 60\n"
+                        f"Orange - 130</code>",
+                        reply_markup=get_confirm_keyboard()
                     )
+
+                    # Auto-generate meal data for quick confirm
+                    data['auto_generated_meal'] = self._convert_recognized_to_meal(result['items'][:10])
+                    self.user_manager.set_user_state(user_id, 'awaiting_manual_input', data)
+
                 else:
                     await update.message.reply_text(
                         "❌ Could not recognize food in the photo.\n\n"
@@ -677,8 +690,9 @@ class FithubBot:
                         reply_markup=remove_keyboard()
                     )
                     self.user_manager.set_user_state(user_id, 'awaiting_manual_input')
+
             except Exception as e:
-                logger.error(f"Error processing photo: {e}")
+                logger.error(f"Error processing photo: {e}", exc_info=True)
                 await update.message.reply_text(
                     "Error processing photo. Please enter food manually.",
                     reply_markup=remove_keyboard()
@@ -686,7 +700,17 @@ class FithubBot:
                 self.user_manager.set_user_state(user_id, 'awaiting_manual_input')
         else:
             await update.message.reply_text("Please use /add_meal to start adding a meal.")
-    
+
+    def _convert_recognized_to_meal(self, recognized_items):
+        """Convert recognized items to meal format"""
+        food_items = []
+        for item in recognized_items:
+            food_items.append({
+                'name': item['name'],
+                'weight': item.get('estimated_weight', 100)
+            })
+        return food_items
+
     # Command methods
     async def add_meal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /add_meal command"""
@@ -798,6 +822,46 @@ class FithubBot:
             "4. Achieve your goals!"
         )
 
+    async def confirm_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Confirm auto-detected meal"""
+        user_id = update.effective_user.id
+        data = self.user_manager.get_user_data(user_id)
+
+        if 'auto_generated_meal' in data:
+            food_items = data['auto_generated_meal']
+
+            # Calculate CPFC
+            meal_cpfc = self.calculator.calculate_meal_cpfc(food_items)
+
+            if not meal_cpfc:
+                meal_cpfc = {'calories': 0, 'protein': 0, 'fat': 0, 'carbs': 0}
+
+            # Save data for confirmation
+            data['food_items'] = food_items
+            data['total_calories'] = meal_cpfc['calories']
+            data['total_protein'] = meal_cpfc['protein']
+            data['total_fat'] = meal_cpfc['fat']
+            data['total_carbs'] = meal_cpfc['carbs']
+
+            self.user_manager.set_user_state(user_id, 'awaiting_confirmation', data)
+
+            items_text = "\n".join([f"• {item['name']}: {item['weight']}g" for item in food_items])
+
+            await update.message.reply_html(
+                f"📝 <b>Your meal:</b>\n\n"
+                f"{items_text}\n\n"
+                f"📊 <b>Nutrition:</b>\n"
+                f"🔥 Calories: <b>{meal_cpfc['calories']:.0f} kcal</b>\n"
+                f"🥩 Protein: <b>{meal_cpfc['protein']:.0f} g</b>\n"
+                f"🥑 Fat: <b>{meal_cpfc['fat']:.0f} g</b>\n"
+                f"🍞 Carbs: <b>{meal_cpfc['carbs']:.0f} g</b>\n\n"
+                f"Is this correct?",
+                reply_markup=get_confirm_keyboard()
+            )
+        else:
+            await update.message.reply_text("No auto-detected meal found. Please send a photo first.")
+
+
 def main():
     """Main function to run the bot"""
     try:
@@ -823,11 +887,12 @@ def main():
         application.add_handler(CommandHandler("today", bot.today_command))
         application.add_handler(CommandHandler("profile", bot.profile_command))
         application.add_handler(CommandHandler("help", bot.help_command))
-        
+        application.add_handler(CommandHandler("confirm", bot.confirm_command))
+
         # Register message handlers
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
         application.add_handler(MessageHandler(filters.PHOTO, bot.handle_photo))
-        
+
         logger.info("All handlers registered")
         
         # Start bot
