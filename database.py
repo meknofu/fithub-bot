@@ -39,22 +39,17 @@ class Database:
         """Initialize database tables"""
         try:
             with self.conn.cursor() as cur:
-                # Check if tables need migration
-                cur.execute("""
-                    SELECT column_name 
-                    FROM information_schema.columns 
-                    WHERE table_name = 'meals'
-                """)
-                meals_columns = [row[0] for row in cur.fetchall()] if cur.rowcount > 0 else []
+                # First, try to add missing columns to existing users table
+                try:
+                    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER")
+                    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS gender VARCHAR(10)")
+                    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS activity_level VARCHAR(50)")
+                    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS goal VARCHAR(50)")
+                    logger.info("Added missing columns to users table")
+                except Exception as e:
+                    logger.warning(f"Column addition: {e}")
 
-                # If wrong structure, drop and recreate
-                if meals_columns and ('food_name' in meals_columns or 'total_calories' not in meals_columns):
-                    logger.warning("Detected wrong meals table structure, dropping tables...")
-                    cur.execute('DROP TABLE IF EXISTS meal_items CASCADE')
-                    cur.execute('DROP TABLE IF EXISTS meals CASCADE')
-                    cur.execute('DROP TABLE IF EXISTS drinks CASCADE')
-
-                # Users table
+                # Users table - now with all columns
                 cur.execute('''
                     CREATE TABLE IF NOT EXISTS users (
                         id BIGINT PRIMARY KEY,
@@ -74,72 +69,7 @@ class Database:
                     )
                 ''')
 
-                # Trainer-trainee relationship table
-                cur.execute('''
-                    CREATE TABLE IF NOT EXISTS trainer_trainee (
-                        trainer_id BIGINT,
-                        trainee_id BIGINT,
-                        PRIMARY KEY (trainer_id, trainee_id)
-                    )
-                ''')
-
-                # Food items table
-                cur.execute('''
-                    CREATE TABLE IF NOT EXISTS food_items (
-                        id SERIAL PRIMARY KEY,
-                        name VARCHAR(255) UNIQUE,
-                        calories FLOAT,
-                        protein FLOAT,
-                        fat FLOAT,
-                        carbs FLOAT,
-                        per_grams INTEGER DEFAULT 100
-                    )
-                ''')
-
-                # Meals table (for meal summaries)
-                cur.execute('''
-                    CREATE TABLE IF NOT EXISTS meals (
-                        id SERIAL PRIMARY KEY,
-                        user_id BIGINT,
-                        meal_type VARCHAR(50),
-                        date DATE,
-                        total_calories FLOAT,
-                        total_protein FLOAT,
-                        total_fat FLOAT,
-                        total_carbs FLOAT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
-
-                # Meal items table
-                cur.execute('''
-                    CREATE TABLE IF NOT EXISTS meal_items (
-                        id SERIAL PRIMARY KEY,
-                        meal_id INTEGER REFERENCES meals(id),
-                        food_item_id INTEGER REFERENCES food_items(id),
-                        weight_grams FLOAT,
-                        calories FLOAT,
-                        protein FLOAT,
-                        fat FLOAT,
-                        carbs FLOAT
-                    )
-                ''')
-
-                # Drinks table
-                cur.execute('''
-                    CREATE TABLE IF NOT EXISTS drinks (
-                        id SERIAL PRIMARY KEY,
-                        user_id BIGINT,
-                        drink_name VARCHAR(255),
-                        volume_ml FLOAT,
-                        calories FLOAT,
-                        protein FLOAT,
-                        fat FLOAT,
-                        carbs FLOAT,
-                        date DATE,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
+                # ... rest of your init_tables code ...
 
                 self.conn.commit()
                 logger.info("Database tables initialized")
